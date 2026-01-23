@@ -105,7 +105,7 @@ services:
       NEXT_PUBLIC_COST_SERVICE_URL: http://localhost:8001
       NEXT_PUBLIC_ML_SERVICE_URL: http://localhost:8002
     ports:
-      - "3000:3000"
+      - "3005:3000"
     depends_on:
       - cost-service
       - ml-service

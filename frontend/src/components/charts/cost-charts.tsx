@@ -57,7 +57,7 @@ export function CostTrendChart({ data, predictions }: CostTrendChartProps) {
                         borderRadius: "0.5rem",
                     }}
                     labelStyle={{ color: "#f3f4f6" }}
-                    formatter={(value: number) => [`$${value?.toFixed(2)}`, ""]}
+                    formatter={(value) => [`$${(value as number)?.toFixed(2) || '0.00'}`, ""]}
                 />
                 <Area
                     type="monotone"
@@ -113,7 +113,7 @@ export function ServiceCostChart({ data }: ServiceCostChartProps) {
                         border: "1px solid #374151",
                         borderRadius: "0.5rem",
                     }}
-                    formatter={(value: number) => [`$${value.toFixed(2)}`, "Cost"]}
+                    formatter={(value) => [`$${(value as number)?.toFixed(2) || '0.00'}`, "Cost"]}
                 />
                 <Bar dataKey="value" radius={[0, 4, 4, 0]}>
                     {chartData.map((entry, index) => (
@@ -158,7 +158,7 @@ export function CostDistributionChart({ data }: CostDistributionChartProps) {
                         border: "1px solid #374151",
                         borderRadius: "0.5rem",
                     }}
-                    formatter={(value: number) => [`$${value.toFixed(2)}`, "Cost"]}
+                    formatter={(value) => [`$${(value as number)?.toFixed(2) || '0.00'}`, "Cost"]}
                 />
             </PieChart>
         </ResponsiveContainer>

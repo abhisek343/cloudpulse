@@ -185,7 +185,7 @@ class CostRecord(Base):
     
     # Tags and metadata
     tags: Mapped[dict | None] = mapped_column(JSONB)
-    metadata: Mapped[dict | None] = mapped_column(JSONB)
+    record_metadata: Mapped[dict | None] = mapped_column(JSONB)
     
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

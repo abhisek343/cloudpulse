@@ -95,6 +95,22 @@ services:
       - ml_models:/app/models
     restart: unless-stopped
 
+  # Frontend Dashboard
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: cloudpulse-frontend
+    environment:
+      NEXT_PUBLIC_COST_SERVICE_URL: http://localhost:8001
+      NEXT_PUBLIC_ML_SERVICE_URL: http://localhost:8002
+    ports:
+      - "3000:3000"
+    depends_on:
+      - cost-service
+      - ml-service
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import RedisCache
 from app.models import CloudAccount, CostRecord
-from app.services.aws_cost_explorer import AWSCostExplorerService, get_aws_cost_explorer
+from app.services.providers.factory import ProviderFactory
 
 
 class CostSyncService:
@@ -25,7 +25,7 @@ class CostSyncService:
         self.db = db
         self.cache = cache
     
-    async def sync_aws_costs(
+    async def sync_account_costs(
         self,
         cloud_account: CloudAccount,
         days: int = 30,
@@ -43,24 +43,32 @@ class CostSyncService:
         # Get AWS credentials from cloud account
         credentials = cloud_account.credentials or {}
         
-        aws_service = get_aws_cost_explorer(
-            access_key_id=credentials.get("access_key_id"),
-            secret_access_key=credentials.get("secret_access_key"),
-        )
-        
+        # Get generic provider
+        try:
+            provider = ProviderFactory.get_provider(
+                cloud_account.provider,
+                credentials
+            )
+        except ValueError:
+            # Skip unsupported providers
+            return {
+                "account_id": cloud_account.id,
+                "error": f"Unsupported provider: {cloud_account.provider}",
+                "records_created": 0,
+                "records_updated": 0,
+            }
+
         # Calculate date range
         end_date = datetime.utcnow()
         start_date = end_date - timedelta(days=days)
         
-        # Fetch cost data by service
-        raw_data = await aws_service.get_cost_by_service(
+        # Fetch normalized cost data from provider
+        # get_cost_data returns List[Dict] with standardized keys (date, service, amount, etc.)
+        parsed_records = await provider.get_cost_data(
             start_date=start_date,
             end_date=end_date,
             granularity="DAILY",
         )
-        
-        # Parse and normalize data
-        parsed_records = aws_service.parse_cost_response(raw_data)
         
         # Store records
         records_created = 0
@@ -134,10 +142,10 @@ class CostSyncService:
         
         results = []
         for account in accounts:
-            if account.provider == "aws":
-                sync_result = await self.sync_aws_costs(account, days)
+            # Sync for all supported providers
+            if account.provider in ["aws", "azure", "gcp"]:
+                sync_result = await self.sync_account_costs(account, days)
                 results.append(sync_result)
-            # TODO: Add GCP and Azure sync
         
         return results
     

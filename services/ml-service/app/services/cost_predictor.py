@@ -1,15 +1,15 @@
 """
 CloudPulse AI - ML Service
-Cost prediction using Prophet time series forecasting.
+Cost prediction using Amazon Chronos (Foundation Model).
 """
 import logging
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, List, Optional
 
+import torch
 import numpy as np
 import pandas as pd
-from prophet import Prophet
-
+from chronos import ChronosPipeline
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -18,202 +18,167 @@ settings = get_settings()
 
 class CostPredictor:
     """
-    Cost prediction service using Facebook Prophet.
+    Cost prediction service using Amazon Chronos (T5-based Time Series Foundation Model).
     
-    Prophet is ideal for cost forecasting because:
-    - Handles seasonality (weekly, monthly patterns)
-    - Robust to missing data
-    - Handles outliers well
-    - Provides uncertainty intervals
+    Chronos performs zero-shot forecasting, meaning it doesn't need to be 'trained'
+    on specific datasets in the traditional sense, but infers patterns from context.
     """
     
     def __init__(self) -> None:
-        self.model: Prophet | None = None
-        self.is_fitted: bool = False
-        self.last_training_date: datetime | None = None
-    
-    def prepare_data(self, cost_data: list[dict[str, Any]]) -> pd.DataFrame:
-        """
-        Prepare cost data for Prophet.
+        self.pipeline: Optional[ChronosPipeline] = None
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.model_name = f"amazon/chronos-t5-{settings.chronos_model_size}"
         
-        Prophet requires columns named 'ds' (datestamp) and 'y' (value).
+    def _load_model(self):
+        """Lazy load the heavy model."""
+        if self.pipeline is None:
+            logger.info(f"Loading Chronos model: {self.model_name} on {self.device}...")
+            # We use map_location="cpu" to ensure it fits in standard containers if GPU missing
+            self.pipeline = ChronosPipeline.from_pretrained(
+                self.model_name,
+                device_map=self.device,
+                torch_dtype=torch.bfloat16,
+            )
+            logger.info("Chronos model loaded successfully.")
+
+    def prepare_data(self, cost_data: list[dict[str, Any]]) -> torch.Tensor:
+        """
+        Prepare cost data for Chronos.
+        Returns a torch Tensor for model input.
         """
         df = pd.DataFrame(cost_data)
         
-        # Ensure date column is datetime
-        if "date" in df.columns:
-            df["ds"] = pd.to_datetime(df["date"])
-        elif "ds" not in df.columns:
-            raise ValueError("Data must contain 'date' or 'ds' column")
+        if "date" not in df.columns or "amount" not in df.columns:
+            raise ValueError("Data must contain 'date' and 'amount' columns")
+            
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.sort_values("date").reset_index(drop=True)
         
-        # Ensure we have the target column
-        if "amount" in df.columns:
-            df["y"] = df["amount"].astype(float)
-        elif "y" not in df.columns:
-            raise ValueError("Data must contain 'amount' or 'y' column")
-        
-        # Sort by date
-        df = df.sort_values("ds").reset_index(drop=True)
+        # Aggregate duplicates (in case of multiple entries per day)
+        df = df.groupby("date")["amount"].sum().reset_index()
         
         # Fill missing dates with 0
-        date_range = pd.date_range(start=df["ds"].min(), end=df["ds"].max(), freq="D")
-        df = df.set_index("ds").reindex(date_range).fillna(0).reset_index()
-        df.columns = ["ds", "y"] + list(df.columns[2:])
+        date_range = pd.date_range(start=df["date"].min(), end=df["date"].max(), freq="D")
+        df = df.set_index("date").reindex(date_range).fillna(0)
         
-        return df[["ds", "y"]]
-    
+        # Chronos expects a 1D tensor or numpy array context, ideally as a Series
+        # We return the values as a tensor input context
+        return torch.tensor(df["amount"].values, dtype=torch.float32)
+
     def train(self, cost_data: list[dict[str, Any]]) -> dict[str, Any]:
         """
-        Train the Prophet model on historical cost data.
-        
-        Args:
-            cost_data: List of dicts with 'date' and 'amount' keys
-            
-        Returns:
-            Training metrics and status
+        'Train' method for compatibility. 
+        For Foundation Models, this just validates data and pre-loads weights.
         """
         if len(cost_data) < settings.min_samples_for_training:
             return {
                 "success": False,
-                "error": f"Insufficient data. Need at least {settings.min_samples_for_training} samples.",
-                "samples_provided": len(cost_data),
+                "error": f"Insufficient context. Need at least {settings.min_samples_for_training} days.",
             }
-        
+            
         try:
-            df = self.prepare_data(cost_data)
-            
-            # Initialize Prophet with sensible defaults for cost data
-            self.model = Prophet(
-                yearly_seasonality=True,
-                weekly_seasonality=True,
-                daily_seasonality=False,
-                seasonality_mode="multiplicative",
-                changepoint_prior_scale=0.05,  # Conservative to avoid overfitting
-                interval_width=0.95,  # 95% confidence interval
-            )
-            
-            # Add monthly seasonality
-            self.model.add_seasonality(
-                name="monthly",
-                period=30.5,
-                fourier_order=5,
-            )
-            
-            # Fit the model
-            self.model.fit(df)
-            self.is_fitted = True
-            self.last_training_date = datetime.utcnow()
-            
-            logger.info(f"Model trained successfully on {len(df)} samples")
+            self._load_model()
+            # We can verify data format here
+            _ = self.prepare_data(cost_data)
             
             return {
                 "success": True,
-                "samples_used": len(df),
-                "date_range": {
-                    "start": df["ds"].min().isoformat(),
-                    "end": df["ds"].max().isoformat(),
-                },
-                "trained_at": self.last_training_date.isoformat(),
+                "model": self.model_name,
+                "status": "Ready (Zero-Shot)",
+                "trained_at": datetime.utcnow().isoformat(),
             }
-            
         except Exception as e:
-            logger.error(f"Training failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-            }
-    
+            logger.error(f"Model initialization failed: {e}")
+            return {"success": False, "error": str(e)}
+
     def predict(
         self,
         days: int | None = None,
         include_history: bool = False,
+        cost_data: Optional[list[dict[str, Any]]] = None, # Passed dynamically for context
     ) -> dict[str, Any]:
         """
-        Generate cost predictions for the next N days.
+        Generate cost predictions.
         
         Args:
-            days: Number of days to forecast (default: from settings)
-            include_history: Whether to include historical fitted values
-            
-        Returns:
-            Prediction results with confidence intervals
+            days: Forecast horizon
+            cost_data: Historical context is REQUIRED for zero-shot inference
         """
-        if not self.is_fitted or self.model is None:
-            return {
-                "success": False,
-                "error": "Model not trained. Call train() first.",
-            }
-        
+        if not cost_data:
+             return {"success": False, "error": "Chronos requires 'cost_data' context for inference."}
+
         days = days or settings.forecast_days
+        self._load_model()
         
         try:
-            # Create future dataframe
-            future = self.model.make_future_dataframe(periods=days)
+            # 1. Prepare Context
+            context_tensor = self.prepare_data(cost_data)
             
-            # Make predictions
-            forecast = self.model.predict(future)
+            # 2. Generate Forecast
+            # Chronos expects list of contexts. We have 1 series.
+            # num_samples=20 allows us to compute confidence intervals
+            forecast = self.pipeline.predict(
+                context=context_tensor,
+                prediction_length=days,
+                num_samples=20, 
+            )
+            # forecast shape: (1, num_samples, prediction_length)
             
-            # Extract predictions
-            if include_history:
-                predictions = forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]].copy()
-            else:
-                predictions = forecast.tail(days)[["ds", "yhat", "yhat_lower", "yhat_upper"]].copy()
+            # 3. Process Results
+            # Compute median and quantiles
+            forecast_tensor = forecast[0] # (num_samples, days)
+            median = torch.median(forecast_tensor, dim=0).values.numpy()
+            lower = torch.quantile(forecast_tensor, 0.1, dim=0).numpy()
+            upper = torch.quantile(forecast_tensor, 0.9, dim=0).numpy()
             
-            # Convert to list of dicts
+            # 4. Map dates
+            last_date = datetime.strptime(cost_data[-1]["date"], "%Y-%m-%d")
+            if isinstance(cost_data[-1]["date"], datetime):
+                 last_date = cost_data[-1]["date"]
+            elif isinstance(cost_data[-1]["date"], str):
+                 try:
+                    last_date = datetime.strptime(cost_data[-1]["date"], "%Y-%m-%d")
+                 except: 
+                    last_date = datetime.fromisoformat(cost_data[-1]["date"])
+
+            future_dates = [last_date + timedelta(days=i+1) for i in range(days)]
+            
             result = []
-            for _, row in predictions.iterrows():
+            for i, date in enumerate(future_dates):
                 result.append({
-                    "date": row["ds"].isoformat(),
-                    "predicted_cost": max(0, float(row["yhat"])),  # Cost can't be negative
-                    "lower_bound": max(0, float(row["yhat_lower"])),
-                    "upper_bound": max(0, float(row["yhat_upper"])),
+                    "date": date.strftime("%Y-%m-%d"),
+                    "predicted_cost": float(max(0, median[i])),
+                    "lower_bound": float(max(0, lower[i])),
+                    "upper_bound": float(max(0, upper[i])),
                 })
             
-            # Calculate summary statistics
+            # Summary
             total_predicted = sum(r["predicted_cost"] for r in result)
-            avg_daily = total_predicted / len(result) if result else 0
             
             return {
                 "success": True,
                 "predictions": result,
                 "summary": {
                     "total_predicted_cost": round(total_predicted, 2),
-                    "average_daily_cost": round(avg_daily, 2),
-                    "forecast_days": len(result),
-                    "confidence_level": 0.95,
+                    "model": "Amazon Chronos (Zero-Shot)",
+                    "confidence_level": 0.80, # 10th-90th percentile
                 },
             }
             
         except Exception as e:
-            logger.error(f"Prediction failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-            }
-    
+            logger.error(f"Chronos Prediction failed: {e}")
+            return {"success": False, "error": str(e)}
+
     def get_trend_components(self) -> dict[str, Any]:
-        """Get the trend and seasonality components."""
-        if not self.is_fitted or self.model is None:
-            return {"error": "Model not trained"}
-        
-        # Get the last fitted values
-        future = self.model.make_future_dataframe(periods=0)
-        forecast = self.model.predict(future)
-        
-        return {
-            "trend": forecast["trend"].tolist(),
-            "weekly": forecast["weekly"].tolist() if "weekly" in forecast else [],
-            "yearly": forecast["yearly"].tolist() if "yearly" in forecast else [],
-            "monthly": forecast["monthly"].tolist() if "monthly" in forecast else [],
-        }
+        """Chronos is end-to-end, doesn't output trend/seasonality explicitly."""
+        return {"note": "Decomposition not available in FMs"}
 
 
-# Singleton instance
+# Singleton
 _predictor: CostPredictor | None = None
 
-
 def get_predictor() -> CostPredictor:
-    """Get or create the predictor instance."""
+    """Get predictor instance."""
     global _predictor
     if _predictor is None:
         _predictor = CostPredictor()

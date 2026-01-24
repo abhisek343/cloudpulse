@@ -8,307 +8,269 @@
 [![Next.js 14](https://img.shields.io/badge/Next.js-14-black?style=for-the-badge&logo=next.js)](https://nextjs.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com/)
 
-**AI-Powered Cloud Cost Prediction & Optimization Platform**
+### Predict cloud costs before they satisfyyou. Ask questions in plain English.
 
-*Predict cloud costs before they happen. Detect anomalies automatically. Optimize spending with AI.*
+*An open-source, privacy-first FinOps platform with AI-powered forecasting and natural language queries.*
 
-[Features](#-features) • [Architecture](#-architecture) • [Quick Start](#-quick-start) • [API Docs](#-api-documentation) • [Tech Stack](#-tech-stack)
+[Quick Start](#-quick-start) | [Features](#-features) | [Architecture](#-architecture) | [Contributing](CONTRIBUTING.md)
 
 </div>
 
 ---
 
-## 🎯 What is CloudPulse AI?
+## Why I Built This
 
-CloudPulse AI is a **predictive FinOps platform** that goes beyond traditional cost monitoring. Instead of just showing you what you've already spent, it:
+Existing FinOps tools show you what you **already spent**. That's not helpful when your bill arrives.
 
-- 🔮 **Predicts future costs** using ML time-series forecasting
-- 🔍 **Detects anomalies** in real-time with Isolation Forest
-- 📊 **Visualizes trends** with interactive dashboards
-- 💡 **Suggests optimizations** to reduce cloud spending
+I wanted a tool that:
+- **Predicts** next month's costs using foundation models (Amazon Chronos)
+- **Explains** cost spikes in plain English ("Why did EC2 costs jump last Tuesday?")
+- **Simulates** savings scenarios before you commit ("What if I move 40% to Spot?")
+- **Runs locally** - your billing data never leaves your VPC
 
-### Why CloudPulse AI?
-
-| Traditional FinOps Tools | CloudPulse AI |
-|--------------------------|---------------|
-| Shows past costs ❌ | Predicts future costs ✅ |
-| Manual anomaly review ❌ | AI-powered detection ✅ |
-| Basic dashboards ❌ | Real-time visualizations ✅ |
-| Reactive approach ❌ | Proactive optimization ✅ |
+CloudPulse AI is my answer to: *"What if FinOps tools were actually proactive?"*
 
 ---
 
-## ✨ Features
+## Demo
 
-### 📈 Cost Prediction
-- **30/60/90 day forecasts** using Facebook Prophet
-- **95% confidence intervals** for budget planning
-- **Seasonality detection** (weekly, monthly, yearly patterns)
-- **Trend analysis** and growth projections
+<!-- Add your screenshots/GIFs here -->
+<div align="center">
 
-### 🚨 Anomaly Detection
-- **Real-time monitoring** with Isolation Forest algorithm
-- **Severity classification** (low, medium, high, critical)
-- **Root cause analysis** suggestions
-- **Configurable sensitivity** levels
+| Dashboard | Cost Predictions | Chat Interface |
+|:---------:|:----------------:|:--------------:|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Predictions](docs/screenshots/predictions.png) | ![Chat](docs/screenshots/chat.png) |
 
-### 📊 Interactive Dashboard
-- **Modern dark theme** with glassmorphism design
-- **Real-time charts** (cost trends, service breakdown, regions)
-- **KPI cards** with trend indicators
-- **Responsive design** for all devices
+*Screenshots coming soon - run `docker-compose up` to see it live!*
 
-### 🔧 Cloud Integration
-- **AWS Cost Explorer** integration
-- Multi-account support
-- Tag-based cost allocation
-- Scheduled data sync
+</div>
 
 ---
 
-## 🏗 Architecture
+## Features
+
+### AI-Powered Cost Forecasting
+- **Amazon Chronos** (T5-based foundation model) for zero-shot time-series prediction
+- Confidence intervals (10th-90th percentile) for risk assessment
+- No training required - works out of the box with your data
+
+### Natural Language Queries
+- *"Why did my costs spike last week?"*
+- *"Which service is growing fastest?"*
+- Works with OpenAI, Claude, Gemini, or local models (Ollama)
+- Privacy-first: billing data is summarized locally before LLM calls
+
+### What-If Cost Simulator
+- Interactive scenarios: *"What if I move 40% to Spot Instances?"*
+- Real-time savings projections
+- Client-side calculations - no backend latency
+
+### Anomaly Detection
+- Isolation Forest algorithm detects unusual spending patterns
+- Configurable sensitivity (low/medium/high)
+- Automatic alerts for cost spikes
+
+### Multi-Cloud Ready
+- Unified provider abstraction layer
+- AWS Cost Explorer integration (Azure, GCP: PRs welcome!)
+- Extensible for custom/on-prem providers
+
+---
+
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        CloudPulse AI                            │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│   ┌─────────────┐     ┌─────────────┐     ┌─────────────┐       │
-│   │  Frontend   │     │  Prometheus │     │   Grafana   │       │
-│   │  (Next.js)  │     │  Monitoring │     │  Dashboards │       │
-│   │   :3000     │     │    :9090    │     │    :3001    │       │
-│   └──────┬──────┘     └─────────────┘     └─────────────┘       │
-│          │                                                       │
-│   ───────┴───────────────────────────────────────────────────   │
-│                           API Gateway                            │
-│   ───────────────────────────────────────────────────────────   │
-│          │                    │                                  │
-│   ┌──────┴──────┐      ┌──────┴──────┐                          │
-│   │ Cost Service│      │ ML Service  │                          │
-│   │  (FastAPI)  │      │  (FastAPI)  │                          │
-│   │   :8001     │      │   :8002     │                          │
-│   └──────┬──────┘      └──────┬──────┘                          │
-│          │                    │                                  │
-│   ───────┴────────────────────┴─────────────────────────────    │
-│                                                                  │
-│   ┌────────┐  ┌───────┐  ┌──────────┐  ┌───────────────┐        │
-│   │Postgres│  │ Redis │  │ RabbitMQ │  │ AWS Cost      │        │
-│   │  :5432 │  │ :6379 │  │  :5672   │  │ Explorer API  │        │
-│   └────────┘  └───────┘  └──────────┘  └───────────────┘        │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
+                              CloudPulse AI
+    ================================================================
+    
+         [Frontend]              [Monitoring]           [Metrics]
+          Next.js                 Prometheus             Grafana
+           :3000                    :9090                 :3001
+              |                       |                     |
+    ----------|=======================|=====================|------
+              |                       |                     |
+              v                       v                     v
+    ================================================================
+                              API Gateway
+    ================================================================
+              |                                           |
+              v                                           v
+    +-------------------+                     +-------------------+
+    |   Cost Service    |                     |    ML Service     |
+    |     (FastAPI)     |                     |     (FastAPI)     |
+    |       :8001       |                     |       :8002       |
+    |                   |                     |                   |
+    | - Cost aggregation|                     | - Chronos (T5)    |
+    | - Provider sync   |                     | - Isolation Forest|
+    | - K8s attribution |                     | - LLM integration |
+    +-------------------+                     +-------------------+
+              |                                           |
+    ----------|===========================================|----------
+              |                                           |
+              v                                           v
+    +----------+  +---------+  +------------+  +------------------+
+    | Postgres |  |  Redis  |  |  RabbitMQ  |  | Cloud Provider   |
+    |   :5432  |  |  :6379  |  |   :5672    |  | APIs (AWS, etc.) |
+    +----------+  +---------+  +------------+  +------------------+
 ```
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
-
 - Docker & Docker Compose
-- Node.js 20+ (for local frontend dev)
-- Python 3.11+ (for local backend dev)
+- 4GB RAM (Chronos model is ~400MB)
 
-### Using Docker Compose (Recommended)
+### One Command Setup
 
 ```bash
-# Clone the repository
+# Clone and start
 git clone https://github.com/abhisek343/cloudpulse.git
 cd cloudpulse
-
-# Start all services
 docker-compose up -d
 
-# View logs
-docker-compose logs -f
+# Generate demo data (no AWS account needed!)
+docker-compose exec cost-service python scripts/seed_data.py
 ```
 
-### Access the Application
+### Access Points
 
-| Service | URL | Credentials |
-|---------|-----|-------------|
-| **Frontend** | http://localhost:3000 | - |
-| **Cost Service API** | http://localhost:8001/docs | - |
-| **ML Service API** | http://localhost:8002/docs | - |
+| Service | URL | Notes |
+|---------|-----|-------|
+| **Dashboard** | http://localhost:3000 | Main UI |
+| **Cost API** | http://localhost:8001/docs | Swagger docs |
+| **ML API** | http://localhost:8002/docs | Swagger docs |
 | **Grafana** | http://localhost:3001 | admin / cloudpulse |
-| **Prometheus** | http://localhost:9090 | - |
-| **RabbitMQ** | http://localhost:15672 | guest / guest |
+| **Prometheus** | http://localhost:9090 | Metrics |
 
 ---
 
-## 📖 API Documentation
+## Tech Stack
 
-### Cost Service API (`/api/v1`)
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/costs/summary` | GET | Get aggregated cost summary |
-| `/costs/trend` | GET | Get cost trend data |
-| `/costs/by-service` | GET | Get costs grouped by service |
-| `/costs/by-region` | GET | Get costs grouped by region |
-| `/accounts/` | GET | List cloud accounts |
-| `/accounts/` | POST | Add cloud account |
-| `/accounts/{id}/sync` | POST | Trigger cost sync |
-
-### ML Service API (`/api/v1/ml`)
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/train` | POST | Train prediction models |
-| `/predict` | POST | Get cost predictions |
-| `/detect` | POST | Detect anomalies in data |
-| `/detect/single` | POST | Check single record |
-| `/status` | GET | Get model status |
+| Layer | Technology | Why |
+|-------|------------|-----|
+| **ML/AI** | Amazon Chronos (T5), scikit-learn | Foundation model for zero-shot forecasting |
+| **Backend** | FastAPI, SQLAlchemy 2.0, Pydantic | Async-first, type-safe Python |
+| **Frontend** | Next.js 14, TypeScript, Tailwind | Modern React with App Router |
+| **Data** | PostgreSQL, Redis, RabbitMQ | Battle-tested infrastructure |
+| **Observability** | Prometheus, Grafana | Production-ready monitoring |
 
 ---
 
-## 🛠 Tech Stack
-
-### Backend
-- **FastAPI** - High-performance async Python framework
-- **PostgreSQL** - Primary database
-- **Redis** - Caching and session storage
-- **RabbitMQ** - Message queue for async tasks
-- **SQLAlchemy 2.0** - Async ORM
-
-### Machine Learning
-- **Facebook Prophet** - Time-series forecasting
-- **scikit-learn** - Anomaly detection (Isolation Forest)
-- **Pandas & NumPy** - Data processing
-
-### Frontend
-- **Next.js 14** - React framework with App Router
-- **TypeScript** - Type-safe JavaScript
-- **Tailwind CSS** - Utility-first styling
-- **Recharts** - Interactive charts
-- **React Query** - Data fetching
-
-### DevOps
-- **Docker & Docker Compose** - Containerization
-- **GitHub Actions** - CI/CD pipeline
-- **Prometheus** - Metrics collection
-- **Grafana** - Visualization & alerting
-
----
-
-## 📁 Project Structure
+## Project Structure
 
 ```
 cloudpulse-ai/
 ├── services/
-│   ├── cost-service/          # Cost data service
+│   ├── cost-service/          # Cost data ingestion & aggregation
 │   │   ├── app/
-│   │   │   ├── api/           # FastAPI routes
-│   │   │   ├── core/          # Config, DB, cache
-│   │   │   ├── models/        # SQLAlchemy models
-│   │   │   ├── schemas/       # Pydantic schemas
-│   │   │   └── services/      # Business logic
-│   │   └── tests/             # Pytest tests
+│   │   │   ├── api/           # REST endpoints
+│   │   │   ├── services/      # Business logic + provider adapters
+│   │   │   └── models/        # SQLAlchemy models
+│   │   └── tests/
 │   │
-│   └── ml-service/            # ML prediction service
+│   └── ml-service/            # Predictions & anomaly detection
 │       ├── app/
 │       │   ├── api/           # ML endpoints
-│       │   ├── core/          # Configuration
-│       │   ├── models/        # Schemas
-│       │   └── services/      # Predictor & Detector
-│       └── tests/             # ML tests
+│       │   └── services/      # Chronos + Isolation Forest
+│       └── tests/
 │
 ├── frontend/                  # Next.js dashboard
-│   └── src/
-│       ├── app/               # Pages (App Router)
-│       ├── components/        # React components
-│       └── lib/               # Utilities & API client
-│
-├── monitoring/
-│   ├── prometheus/            # Prometheus config
-│   └── grafana/               # Grafana dashboards
-│
-├── .github/workflows/         # CI/CD pipelines
-├── docker-compose.yml         # Docker orchestration
+├── monitoring/                # Prometheus + Grafana configs
+├── docker-compose.yml
 └── README.md
 ```
 
 ---
 
-## 🧪 Running Tests
+## API Reference
+
+### Cost Service (`/api/v1`)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/costs/summary` | GET | Aggregated cost summary |
+| `/costs/trend` | GET | Historical cost trend |
+| `/costs/by-service` | GET | Breakdown by AWS service |
+| `/accounts/` | POST | Register cloud account |
+| `/accounts/{id}/sync` | POST | Trigger cost sync |
+
+### ML Service (`/api/v1/ml`)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/predict` | POST | Generate cost forecast |
+| `/detect` | POST | Run anomaly detection |
+| `/train` | POST | Initialize models with data |
+| `/status` | GET | Model health check |
+
+---
+
+## Development
 
 ```bash
-# Cost Service Tests
+# Backend (cost-service)
 cd services/cost-service
 pip install -e ".[dev]"
 pytest -v --cov=app
 
-# ML Service Tests
+# Backend (ml-service)
 cd services/ml-service
 pip install -e ".[dev]"
 pytest -v --cov=app
+
+# Frontend
+cd frontend
+npm install
+npm run dev
 ```
 
 ---
 
-## 🔧 Configuration
+## Roadmap
 
-Create a `.env` file in the root directory:
-
-```env
-# Database
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/cloudpulse
-
-# Redis
-REDIS_URL=redis://localhost:6379/0
-
-# AWS (Optional)
-AWS_ACCESS_KEY_ID=your_key
-AWS_SECRET_ACCESS_KEY=your_secret
-AWS_REGION=us-east-1
-
-# JWT
-JWT_SECRET_KEY=your-secret-key
-```
+- [x] AWS Cost Explorer integration
+- [x] Amazon Chronos for forecasting
+- [x] Anomaly detection with Isolation Forest
+- [x] Natural language chat interface
+- [ ] Azure Cost Management integration
+- [ ] GCP Billing integration
+- [ ] Kubernetes namespace cost attribution
+- [ ] Slack/Teams alerting
+- [ ] Terraform cost estimation (pre-deploy)
 
 ---
 
-## 📊 Dashboard Preview
+## Contributing
 
-The dashboard features:
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-- **Real-time KPI cards** showing total costs, predictions, and anomalies
-- **Interactive trend charts** with historical and predicted data
-- **Service breakdown** with cost allocation
-- **Anomaly alerts** with severity indicators
-- **Dark mode** with modern glassmorphism design
-
----
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'feat: add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+**Good first issues:**
+- Add Azure provider adapter
+- Add GCP provider adapter
+- Improve anomaly detection sensitivity tuning
+- Add more chart visualizations
 
 ---
 
-## 📄 License
+## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License - see [LICENSE](LICENSE) for details.
 
 ---
 
-## 👨‍💻 Author
+## Author
 
 **Abhisek Behera**
 
-- GitHub: [@abhisek343](https://github.com/abhisek343)
-- LinkedIn: [abhiske343](https://www.linkedin.com/in/abhiske343/)
+[![GitHub](https://img.shields.io/badge/GitHub-@abhisek343-black?style=flat-square&logo=github)](https://github.com/abhisek343)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-abhiske343-blue?style=flat-square&logo=linkedin)](https://www.linkedin.com/in/abhiske343/)
 
 ---
 
 <div align="center">
 
-**Built with ❤️ using FastAPI, Next.js, and AI/ML**
-
-⭐ Star this repo if you found it helpful!
+**If this helped you understand cloud costs better, consider giving it a star!**
 
 </div>

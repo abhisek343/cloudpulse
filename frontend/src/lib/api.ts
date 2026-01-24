@@ -128,3 +128,22 @@ export async function getModelStatus(): Promise<{
     const response = await mlApi.get("/ml/status");
     return response.data;
 }
+// Helpers
+const API_BASE_URL = COST_SERVICE_URL;
+
+const handleResponse = async (response: Response) => {
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || response.statusText);
+    }
+    return { success: true, data: await response.json() };
+};
+
+// Kubernetes
+export async function getNamespaceCosts() {
+    const response = await fetch(`${API_BASE_URL}/api/v1/k8s/namespaces/cost`, {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+    });
+    return handleResponse(response);
+}

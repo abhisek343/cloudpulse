@@ -43,10 +43,13 @@ class Settings(BaseSettings):
     prediction_confidence_threshold: float = 0.8
     anomaly_sensitivity: Literal["low", "medium", "high"] = "medium"
     forecast_days: int = 30
+    min_samples_for_training: int = 14
+    chronos_model_size: str = "tiny" # tiny, small, base, large
     
     # Anomaly Detection Settings
     anomaly_contamination: float = 0.1  # Expected proportion of outliers
-    min_samples_for_training: int = 30
+    # min_samples_for_training: int = 30 # This line was moved to ML Settings
+    
 
 
 @lru_cache

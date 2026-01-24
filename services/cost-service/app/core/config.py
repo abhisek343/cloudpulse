@@ -48,6 +48,15 @@ class Settings(BaseSettings):
     aws_secret_access_key: str | None = None
     aws_region: str = "us-east-1"
     aws_session_token: str | None = None
+
+    # LLM
+    llm_provider: str = "openai"  # openai, anthropic, gemini, etc.
+    llm_api_key: str | None = None
+    llm_model: str = "gpt-3.5-turbo"
+    llm_base_url: str | None = None  # For Ollama / compatible APIs
+    
+    # Kubernetes / Prometheus
+    prometheus_url: str = "http://prometheus-server:9090"
     
     # JWT Authentication
     jwt_secret_key: str = Field(default="change-me-in-production")

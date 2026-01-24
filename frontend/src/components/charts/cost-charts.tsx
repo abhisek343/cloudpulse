@@ -14,37 +14,58 @@ import {
     Pie,
     Cell,
 } from "recharts";
+import { useSimulatorStore } from "@/lib/simulator-store";
 
 interface CostTrendChartProps {
     data: Array<{ date: string; amount: number }>;
-    predictions?: Array<{ date: string; predicted_cost: number }>;
 }
 
-export function CostTrendChart({ data, predictions }: CostTrendChartProps) {
-    const combinedData = [
-        ...data.map((d) => ({
-            date: new Date(d.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-            actual: d.amount,
-            predicted: null,
-        })),
-        ...(predictions?.map((p) => ({
-            date: new Date(p.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-            actual: null,
-            predicted: p.predicted_cost,
-        })) || []),
-    ];
+export function CostTrendChart({ data }: CostTrendChartProps) {
+    const { isEnabled, spotCoverage, reservedCoverage, usageReduction } = useSimulatorStore();
+
+    const chartData = data.map(item => {
+        // Safe conversion of amount
+        const amount = typeof item.amount === 'number' ? item.amount : 0;
+
+        if (!isEnabled) {
+            return {
+                ...item,
+                date: new Date(item.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+                amount: amount,
+                simulated: null
+            };
+        }
+
+        // Calculate simulated savings
+        const computePortion = 0.4;
+        const spotSavings = (amount * computePortion) * (spotCoverage / 100) * 0.6;
+
+        const reservedPortion = 0.8;
+        const reservedSavings = (amount * reservedPortion) * (reservedCoverage / 100) * 0.3;
+
+        const usageSavings = amount * (usageReduction / 100);
+
+        const simulatedAmount = Math.max(0, amount - spotSavings - reservedSavings - usageSavings);
+
+        return {
+            ...item,
+            date: new Date(item.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+            amount: amount,
+            simulated: simulatedAmount
+        };
+    });
 
     return (
         <ResponsiveContainer width="100%" height={300}>
-            <AreaChart data={combinedData}>
+            <AreaChart data={chartData}>
                 <defs>
                     <linearGradient id="colorActual" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.4} />
                         <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
                     </linearGradient>
-                    <linearGradient id="colorPredicted" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
-                        <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                    <linearGradient id="colorSimulated" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#22c55e" stopOpacity={0.4} />
+                        <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
                     </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -57,25 +78,30 @@ export function CostTrendChart({ data, predictions }: CostTrendChartProps) {
                         borderRadius: "0.5rem",
                     }}
                     labelStyle={{ color: "#f3f4f6" }}
-                    formatter={(value) => [`$${(value as number)?.toFixed(2) || '0.00'}`, ""]}
+                    formatter={(value: any, name: string) => [
+                        `$${Number(value).toFixed(2)}`,
+                        name === 'simulated' ? 'Projected' : 'Actual'
+                    ]}
                 />
                 <Area
                     type="monotone"
-                    dataKey="actual"
+                    dataKey="amount"
                     stroke="#3b82f6"
                     fill="url(#colorActual)"
                     strokeWidth={2}
                     name="Actual"
                 />
-                <Area
-                    type="monotone"
-                    dataKey="predicted"
-                    stroke="#10b981"
-                    fill="url(#colorPredicted)"
-                    strokeWidth={2}
-                    strokeDasharray="5 5"
-                    name="Predicted"
-                />
+                {isEnabled && (
+                    <Area
+                        type="monotone"
+                        dataKey="simulated"
+                        stroke="#22c55e"
+                        fill="url(#colorSimulated)"
+                        strokeWidth={2}
+                        strokeDasharray="5 5"
+                        name="Projected"
+                    />
+                )}
             </AreaChart>
         </ResponsiveContainer>
     );

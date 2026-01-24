@@ -34,23 +34,25 @@ def create_app() -> FastAPI:
         title=settings.app_name,
         version=settings.app_version,
         description="AI-Powered Cloud Cost Prediction & Optimization Platform",
-        docs_url="/docs",
-        redoc_url="/redoc",
-        openapi_url="/openapi.json",
+        openapi_url=f"{settings.api_prefix}/openapi.json",
         lifespan=lifespan,
     )
     
     # CORS middleware
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    if settings.cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.cors_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
     
-    # Include API routes
-    app.include_router(api_router, prefix=settings.api_prefix)
+    # Include API# Routers
+    app.include_router(api_router.router, prefix=settings.api_prefix)
+    app.include_router(chat.router, prefix=f"{settings.api_prefix}/chat", tags=["AI Analyst"])
+    from app.api import kubernetes
+    app.include_router(kubernetes.router, prefix=f"{settings.api_prefix}/k8s", tags=["Kubernetes"])
     
     return app
 

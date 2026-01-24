@@ -8,13 +8,15 @@ import {
     AlertTriangle,
     Cloud,
     Settings,
-    CreditCard
+    CreditCard,
+    Server
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navigation = [
     { name: "Dashboard", href: "/", icon: LayoutDashboard },
     { name: "Cost Analysis", href: "/costs", icon: CreditCard },
+    { name: "Kubernetes", href: "/kubernetes", icon: Server },
     { name: "Predictions", href: "/predictions", icon: TrendingUp },
     { name: "Anomalies", href: "/anomalies", icon: AlertTriangle },
     { name: "Cloud Accounts", href: "/accounts", icon: Cloud },

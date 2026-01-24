@@ -2,6 +2,11 @@
 
 import { DollarSign, TrendingDown, TrendingUp, AlertTriangle, Cloud } from "lucide-react";
 import { Card, ChartCard } from "@/components/ui/card";
+import { Overview } from "@/components/dashboard/overview";
+import { RecentActivity } from "@/components/dashboard/recent-activity";
+import { ChatInterface } from "@/components/dashboard/chat-interface";
+import { SimulatorControls } from "@/components/dashboard/simulator-controls";
+import { Suspense } from "react";
 import { CostTrendChart, ServiceCostChart, CostDistributionChart } from "@/components/charts/cost-charts";
 import { formatCurrency } from "@/lib/utils";
 
@@ -70,9 +75,18 @@ export function DashboardContent() {
                 <Card
                     title="Total Cost (MTD)"
                     value={formatCurrency(mockCostSummary.total_cost)}
-                    trend={{ value: percentChange, isPositive: percentChange > 0 }}
-                    subtitle="vs last month"
-                    icon={<DollarSign className="h-5 w-5" />}
+                    subtitle={
+                        percentChange >= 0
+                            ? `+${percentChange.toFixed(2)}% from last period`
+                            : `${percentChange.toFixed(2)}% from last period`
+                    }
+                    icon={
+                        percentChange >= 0 ? (
+                            <TrendingUp className="h-5 w-5 text-green-500" />
+                        ) : (
+                            <TrendingDown className="h-5 w-5 text-red-500" />
+                        )
+                    }
                 />
                 <Card
                     title="Predicted (Next 5 Days)"
@@ -95,10 +109,21 @@ export function DashboardContent() {
                 />
             </div>
 
+            {/* Simulator Controls */}
+            <div className="mb-6">
+                <SimulatorControls />
+            </div>
+
+            {/* Main Content Areas */}
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
+                <Overview />
+                <RecentActivity />
+            </div>
+
             {/* Charts Row 1 */}
             <div className="grid gap-6 lg:grid-cols-3">
                 <ChartCard title="Cost Trend & Forecast" className="lg:col-span-2">
-                    <CostTrendChart data={mockCostSummary.by_day} predictions={mockPredictions} />
+                    <CostTrendChart data={mockCostSummary.by_day} />
                 </ChartCard>
                 <ChartCard title="Cost by Region">
                     <CostDistributionChart data={mockRegionCosts} />
@@ -131,7 +156,7 @@ export function DashboardContent() {
                         {mockAnomalies.map((anomaly, index) => (
                             <div
                                 key={index}
-                                className="flex items-center justify-between rounded-xl bg-gray-800/50 p-4 border border-gray-700"
+                                className="flex items-center justify-between rounded-xl bg-gray-800/50 p-4 border border-gray-700 hover:bg-gray-800/80 transition-colors"
                             >
                                 <div className="flex items-center gap-3">
                                     <div
@@ -167,6 +192,8 @@ export function DashboardContent() {
                     </div>
                 </ChartCard>
             </div>
+
+            <ChatInterface />
         </div>
     );
 }

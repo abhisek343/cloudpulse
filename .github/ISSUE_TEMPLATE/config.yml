@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question / Discussion
+    url: https://github.com/abhisek343/cloudpulse/discussions
+    about: Ask questions or start a discussion about CloudPulse AI
+  - name: Documentation
+    url: https://github.com/abhisek343/cloudpulse#readme
+    about: Check the README for setup and usage instructions

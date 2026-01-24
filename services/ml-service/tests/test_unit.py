@@ -31,20 +31,21 @@ class TestMLSettings:
 
 
 class TestCostPredictor:
-    """Tests for Cost Predictor service."""
+    """Tests for Cost Predictor service (Amazon Chronos)."""
     
     def test_predictor_initialization(self):
         """Test predictor initializes correctly."""
         from app.services.cost_predictor import CostPredictor
         
         predictor = CostPredictor()
-        assert predictor.model is None
-        assert predictor.is_fitted is False
-        assert predictor.last_training_date is None
+        assert predictor.pipeline is None  # Lazy loaded
+        assert predictor.device in ["cuda", "cpu"]
+        assert "chronos" in predictor.model_name.lower()
     
     def test_prepare_data_with_date_column(self):
-        """Test data preparation with date column."""
+        """Test data preparation returns tensor for Chronos."""
         from app.services.cost_predictor import CostPredictor
+        import torch
         
         predictor = CostPredictor()
         test_data = [
@@ -53,11 +54,11 @@ class TestCostPredictor:
             {"date": datetime(2026, 1, 3), "amount": 120},
         ]
         
-        df = predictor.prepare_data(test_data)
+        tensor = predictor.prepare_data(test_data)
         
-        assert "ds" in df.columns
-        assert "y" in df.columns
-        assert len(df) >= 3
+        assert isinstance(tensor, torch.Tensor)
+        assert tensor.dtype == torch.float32
+        assert len(tensor) >= 3
     
     def test_prepare_data_fills_missing_dates(self):
         """Test that missing dates are filled with zeros."""
@@ -69,10 +70,21 @@ class TestCostPredictor:
             {"date": datetime(2026, 1, 5), "amount": 150},  # Gap of 3 days
         ]
         
-        df = predictor.prepare_data(test_data)
+        tensor = predictor.prepare_data(test_data)
         
         # Should have 5 days (Jan 1-5)
-        assert len(df) == 5
+        assert len(tensor) == 5
+    
+    def test_prepare_data_missing_columns(self):
+        """Test data preparation fails with missing columns."""
+        from app.services.cost_predictor import CostPredictor
+        import pytest
+        
+        predictor = CostPredictor()
+        test_data = [{"invalid": 100}]
+        
+        with pytest.raises(ValueError, match="date.*amount"):
+            predictor.prepare_data(test_data)
     
     def test_train_insufficient_data(self):
         """Test training fails with insufficient data."""
@@ -87,17 +99,17 @@ class TestCostPredictor:
         result = predictor.train(test_data)
         
         assert result["success"] is False
-        assert "Insufficient data" in result.get("error", "")
+        assert "Insufficient" in result.get("error", "")
     
-    def test_predict_without_training(self):
-        """Test prediction fails without training."""
+    def test_predict_without_context(self):
+        """Test prediction requires cost_data context for Chronos."""
         from app.services.cost_predictor import CostPredictor
         
         predictor = CostPredictor()
-        result = predictor.predict(days=7)
+        result = predictor.predict(days=7)  # No cost_data provided
         
         assert result["success"] is False
-        assert "not trained" in result.get("error", "").lower()
+        assert "context" in result.get("error", "").lower()
     
     def test_get_predictor_singleton(self):
         """Test get_predictor returns same instance."""
@@ -107,6 +119,15 @@ class TestCostPredictor:
         predictor2 = get_predictor()
         
         assert predictor1 is predictor2
+    
+    def test_get_trend_components(self):
+        """Test trend components returns note about FM limitations."""
+        from app.services.cost_predictor import CostPredictor
+        
+        predictor = CostPredictor()
+        result = predictor.get_trend_components()
+        
+        assert "note" in result
 
 
 class TestAnomalyDetector:

@@ -55,6 +55,8 @@ services:
       context: ./services/cost-service
       dockerfile: Dockerfile
     container_name: cloudpulse-cost-service
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/cloudpulse
       REDIS_URL: redis://redis:6379/0
@@ -80,6 +82,8 @@ services:
       context: ./services/ml-service
       dockerfile: Dockerfile
     container_name: cloudpulse-ml-service
+    env_file:
+      - .env
     environment:
       COST_SERVICE_URL: http://cost-service:8000
       REDIS_URL: redis://redis:6379/1

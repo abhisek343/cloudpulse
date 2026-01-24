@@ -2,9 +2,10 @@
 CloudPulse AI - Cost Service
 AWS Cost Provider implementation.
 """
+import logging
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Dict, List
+from typing import Any
 
 import boto3
 from botocore.exceptions import ClientError
@@ -13,12 +14,14 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from app.core.config import get_settings
 from app.services.providers.base import CostProvider
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
+
 
 class AWSCostProvider(CostProvider):
     """AWS implementation of CostProvider using Cost Explorer."""
     
-    def __init__(self, credentials: Dict[str, str]):
+    def __init__(self, credentials: dict[str, str]) -> None:
         self.client = boto3.client(
             "ce",
             aws_access_key_id=credentials.get("access_key_id") or settings.aws_access_key_id,
@@ -33,7 +36,7 @@ class AWSCostProvider(CostProvider):
         start_date: datetime, 
         end_date: datetime, 
         granularity: str = "DAILY"
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Fetch costs grouped by Service.
         """
@@ -48,7 +51,7 @@ class AWSCostProvider(CostProvider):
         }
 
         try:
-            results = []
+            results: list[dict[str, Any]] = []
             next_token = None
             
             while True:
@@ -65,14 +68,15 @@ class AWSCostProvider(CostProvider):
             return self._parse_response(results)
             
         except ClientError as e:
-            raise Exception(f"AWS Cost Explorer Error: {e}")
+            logger.error(f"AWS Cost Explorer Error: {e}")
+            raise RuntimeError(f"AWS Cost Explorer Error: {e}") from e
 
     async def get_forecast(
         self,
         start_date: datetime,
         end_date: datetime,
         granularity: str = "MONTHLY"
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         try:
             response = self.client.get_cost_forecast(
                 TimePeriod={
@@ -88,11 +92,12 @@ class AWSCostProvider(CostProvider):
                 "forecast_by_time": response.get("ForecastResultsByTime", []),
             }
         except ClientError as e:
-            raise Exception(f"AWS Forecast Error: {e}")
+            logger.error(f"AWS Forecast Error: {e}")
+            raise RuntimeError(f"AWS Forecast Error: {e}") from e
 
-    def _parse_response(self, raw_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _parse_response(self, raw_data: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Normalize AWS response to standard format."""
-        records = []
+        records: list[dict[str, Any]] = []
         for period in raw_data:
             start_str = period["TimePeriod"]["Start"]
             date_obj = datetime.strptime(start_str, "%Y-%m-%d")

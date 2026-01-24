@@ -4,7 +4,8 @@ Abstract Base Class for Cost Providers.
 """
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any
+
 
 class CostProvider(ABC):
     """
@@ -18,7 +19,7 @@ class CostProvider(ABC):
         start_date: datetime, 
         end_date: datetime,
         granularity: str = "DAILY"
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Fetch normalized cost data for the given period.
         
@@ -30,7 +31,7 @@ class CostProvider(ABC):
             - currency: str
             - usage_quantity: Decimal (optional)
         """
-        pass
+        ...
 
     @abstractmethod
     async def get_forecast(
@@ -38,8 +39,8 @@ class CostProvider(ABC):
         start_date: datetime,
         end_date: datetime,
         granularity: str = "MONTHLY"
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Get cost forecast.
         """
-        pass
+        ...

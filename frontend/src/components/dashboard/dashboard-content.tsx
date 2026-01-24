@@ -9,54 +9,13 @@ import { SimulatorControls } from "@/components/dashboard/simulator-controls";
 import { Suspense } from "react";
 import { CostTrendChart, ServiceCostChart, CostDistributionChart } from "@/components/charts/cost-charts";
 import { formatCurrency } from "@/lib/utils";
-
-// Mock data for demonstration
-const mockCostSummary = {
-    total_cost: 12543.78,
-    previous_cost: 11234.56,
-    by_day: [
-        { date: "2026-01-01", amount: 380 },
-        { date: "2026-01-02", amount: 420 },
-        { date: "2026-01-03", amount: 390 },
-        { date: "2026-01-04", amount: 450 },
-        { date: "2026-01-05", amount: 380 },
-        { date: "2026-01-06", amount: 410 },
-        { date: "2026-01-07", amount: 520 },
-        { date: "2026-01-08", amount: 480 },
-        { date: "2026-01-09", amount: 510 },
-        { date: "2026-01-10", amount: 470 },
-    ],
-};
-
-const mockPredictions = [
-    { date: "2026-01-11", predicted_cost: 490 },
-    { date: "2026-01-12", predicted_cost: 510 },
-    { date: "2026-01-13", predicted_cost: 530 },
-    { date: "2026-01-14", predicted_cost: 520 },
-    { date: "2026-01-15", predicted_cost: 545 },
-];
-
-const mockServiceCosts = [
-    { service: "Amazon EC2", total_cost: 4521.32 },
-    { service: "Amazon RDS", total_cost: 2845.12 },
-    { service: "Amazon S3", total_cost: 1523.45 },
-    { service: "AWS Lambda", total_cost: 987.65 },
-    { service: "Amazon CloudFront", total_cost: 654.32 },
-    { service: "Amazon DynamoDB", total_cost: 432.10 },
-];
-
-const mockRegionCosts = [
-    { region: "us-east-1", total_cost: 5234.56 },
-    { region: "us-west-2", total_cost: 3456.78 },
-    { region: "eu-west-1", total_cost: 2345.67 },
-    { region: "ap-southeast-1", total_cost: 1234.56 },
-];
-
-const mockAnomalies = [
-    { severity: "high", service: "Amazon EC2", deviation: 45.2 },
-    { severity: "medium", service: "Amazon RDS", deviation: 23.1 },
-    { severity: "low", service: "AWS Lambda", deviation: 12.5 },
-];
+import {
+    mockCostSummary,
+    mockPredictions,
+    mockServiceCosts,
+    mockRegionCosts,
+    mockAnomalies,
+} from "@/lib/mock-data";
 
 export function DashboardContent() {
     const percentChange = ((mockCostSummary.total_cost - mockCostSummary.previous_cost) / mockCostSummary.previous_cost) * 100;

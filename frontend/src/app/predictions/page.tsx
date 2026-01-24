@@ -4,30 +4,10 @@ import { TrendingUp, Calendar, Target, AlertCircle } from "lucide-react";
 import { Card, ChartCard } from "@/components/ui/card";
 import { CostTrendChart } from "@/components/charts/cost-charts";
 import { formatCurrency } from "@/lib/utils";
+import { mockCostSummary, mockPredictions } from "@/lib/mock-data";
 
-// Mock prediction data
-const mockHistoricalData = [
-    { date: "2026-01-01", amount: 380 },
-    { date: "2026-01-02", amount: 420 },
-    { date: "2026-01-03", amount: 390 },
-    { date: "2026-01-04", amount: 450 },
-    { date: "2026-01-05", amount: 380 },
-    { date: "2026-01-06", amount: 410 },
-    { date: "2026-01-07", amount: 520 },
-    { date: "2026-01-08", amount: 480 },
-    { date: "2026-01-09", amount: 510 },
-    { date: "2026-01-10", amount: 470 },
-];
-
-const mockPredictions = [
-    { date: "2026-01-11", predicted_cost: 490, lower_bound: 420, upper_bound: 560 },
-    { date: "2026-01-12", predicted_cost: 510, lower_bound: 440, upper_bound: 580 },
-    { date: "2026-01-13", predicted_cost: 530, lower_bound: 455, upper_bound: 605 },
-    { date: "2026-01-14", predicted_cost: 520, lower_bound: 445, upper_bound: 595 },
-    { date: "2026-01-15", predicted_cost: 545, lower_bound: 465, upper_bound: 625 },
-    { date: "2026-01-16", predicted_cost: 560, lower_bound: 475, upper_bound: 645 },
-    { date: "2026-01-17", predicted_cost: 540, lower_bound: 460, upper_bound: 620 },
-];
+// Use historical data from shared mock data
+const mockHistoricalData = mockCostSummary.by_day;
 
 export default function PredictionsPage() {
     const totalPredicted = mockPredictions.reduce((sum, p) => sum + p.predicted_cost, 0);
@@ -39,7 +19,7 @@ export default function PredictionsPage() {
             {/* Page Title */}
             <div>
                 <h2 className="text-2xl font-bold text-white">Cost Predictions</h2>
-                <p className="text-gray-400">AI-powered forecasting using Prophet time-series model</p>
+                <p className="text-gray-400">AI-powered forecasting using Amazon Chronos foundation model</p>
             </div>
 
             {/* Stats Cards */}
@@ -57,7 +37,7 @@ export default function PredictionsPage() {
                 <Card
                     title="Confidence Level"
                     value={`${confidence}%`}
-                    subtitle="Prophet model"
+                    subtitle="Chronos model"
                     icon={<Target className="h-5 w-5" />}
                 />
                 <Card
@@ -130,9 +110,9 @@ export default function PredictionsPage() {
             <div className="rounded-xl bg-blue-500/10 border border-blue-500/30 p-4">
                 <h4 className="font-medium text-blue-400">About Our Predictions</h4>
                 <p className="mt-2 text-sm text-gray-400">
-                    Predictions are generated using Facebook Prophet, a time-series forecasting model that
-                    automatically detects weekly, monthly, and yearly seasonality patterns in your cost data.
-                    The model is retrained daily with your latest cost data.
+                    Predictions are generated using Amazon Chronos, a T5-based foundation model for
+                    zero-shot time-series forecasting. Unlike traditional models, Chronos infers patterns
+                    from context without requiring training on your specific data.
                 </p>
             </div>
         </div>

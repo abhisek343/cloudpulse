@@ -65,9 +65,13 @@ async def create_cloud_account(
     account_data: CloudAccountCreate,
     db: AsyncSession = Depends(get_db),
     # TODO: Add auth dependency to get organization_id from current user
+    # See: https://fastapi.tiangolo.com/tutorial/security/oauth2-jwt/
 ) -> CloudAccountResponse:
     """Create a new cloud account connection."""
-    # For now, use a placeholder organization_id (will be replaced with auth)
+    # PLACEHOLDER: In production, organization_id should come from the authenticated
+    # user's JWT token via a dependency like `current_user: User = Depends(get_current_user)`.
+    # This nil UUID is intentionally obvious to catch any accidental production use.
+    # Implementation priority: Add user authentication before deploying to production.
     organization_id = "00000000-0000-0000-0000-000000000000"
     
     # Check for duplicate

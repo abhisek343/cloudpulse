@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     redis_url: RedisDsn = Field(default="redis://localhost:6379/1")
     
     # RabbitMQ
-    rabbitmq_url: str = "amqp://guest:guest@localhost:5672/"
+    rabbitmq_url: str = Field(default="amqp://guest:guest@localhost:5672/")
     
     # ML Settings
     model_path: str = "./models"
@@ -44,12 +44,10 @@ class Settings(BaseSettings):
     anomaly_sensitivity: Literal["low", "medium", "high"] = "medium"
     forecast_days: int = 30
     min_samples_for_training: int = 14
-    chronos_model_size: str = "tiny" # tiny, small, base, large
+    chronos_model_size: Literal["tiny", "small", "base", "large"] = "tiny"
     
     # Anomaly Detection Settings
     anomaly_contamination: float = 0.1  # Expected proportion of outliers
-    # min_samples_for_training: int = 30 # This line was moved to ML Settings
-    
 
 
 @lru_cache

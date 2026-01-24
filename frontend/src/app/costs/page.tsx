@@ -5,31 +5,7 @@ import { DollarSign, Filter, Download, Calendar } from "lucide-react";
 import { Card, ChartCard } from "@/components/ui/card";
 import { ServiceCostChart, CostDistributionChart } from "@/components/charts/cost-charts";
 import { formatCurrency } from "@/lib/utils";
-
-// Mock data
-const mockServiceCosts = [
-    { service: "Amazon EC2", total_cost: 4521.32, change: 12.3 },
-    { service: "Amazon RDS", total_cost: 2845.12, change: -5.2 },
-    { service: "Amazon S3", total_cost: 1523.45, change: 8.7 },
-    { service: "AWS Lambda", total_cost: 987.65, change: 23.4 },
-    { service: "Amazon CloudFront", total_cost: 654.32, change: -2.1 },
-    { service: "Amazon DynamoDB", total_cost: 432.10, change: 15.6 },
-    { service: "Amazon SQS", total_cost: 234.56, change: 3.4 },
-    { service: "Amazon SNS", total_cost: 123.45, change: -8.9 },
-];
-
-const mockRegionCosts = [
-    { region: "us-east-1", total_cost: 5234.56 },
-    { region: "us-west-2", total_cost: 3456.78 },
-    { region: "eu-west-1", total_cost: 2345.67 },
-    { region: "ap-southeast-1", total_cost: 1234.56 },
-];
-
-const timeRanges = [
-    { value: "7", label: "Last 7 Days" },
-    { value: "30", label: "Last 30 Days" },
-    { value: "90", label: "Last 90 Days" },
-];
+import { mockServiceCosts, mockRegionCosts, timeRanges } from "@/lib/mock-data";
 
 export default function CostsPage() {
     const [selectedRange, setSelectedRange] = useState("30");

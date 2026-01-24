@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { getNamespaceCosts } from "@/lib/api";
 import { Card, ChartCard } from "@/components/ui/card";
 import { K8sTreemap } from "@/components/charts/k8s-treemap";
-import { AlertCircle, Server, Layers } from "lucide-react";
+import { AlertCircle, Server, Layers, DollarSign, Activity } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
 export default function KubernetesDashboard() {
@@ -114,5 +114,3 @@ export default function KubernetesDashboard() {
         </div>
     );
 }
-
-import { DollarSign, Activity } from "lucide-react";

@@ -2,7 +2,17 @@
 
 import { Bell, Search, User } from "lucide-react";
 
-export function Header() {
+interface HeaderProps {
+    userName?: string;
+    userRole?: string;
+    notificationCount?: number;
+}
+
+export function Header({ 
+    userName = "User", 
+    userRole = "Member",
+    notificationCount = 0 
+}: HeaderProps) {
     return (
         <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-gray-800 bg-gray-950/80 px-6 backdrop-blur-md">
             {/* Search */}
@@ -19,9 +29,11 @@ export function Header() {
             <div className="flex items-center gap-4">
                 <button className="relative rounded-xl bg-gray-900 p-2 text-gray-400 hover:bg-gray-800 hover:text-white transition-colors">
                     <Bell className="h-5 w-5" />
-                    <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
-                        3
-                    </span>
+                    {notificationCount > 0 && (
+                        <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white">
+                            {notificationCount > 9 ? "9+" : notificationCount}
+                        </span>
+                    )}
                 </button>
 
                 <div className="flex items-center gap-3 rounded-xl bg-gray-900 border border-gray-800 px-3 py-2">
@@ -29,8 +41,8 @@ export function Header() {
                         <User className="h-4 w-4 text-white" />
                     </div>
                     <div className="hidden sm:block">
-                        <p className="text-sm font-medium text-white">Abhisek</p>
-                        <p className="text-xs text-gray-500">Admin</p>
+                        <p className="text-sm font-medium text-white">{userName}</p>
+                        <p className="text-xs text-gray-500">{userRole}</p>
                     </div>
                 </div>
             </div>

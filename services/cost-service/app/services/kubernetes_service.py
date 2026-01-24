@@ -4,7 +4,7 @@ Kubernetes Service for cost allocation via Prometheus.
 """
 import logging
 from typing import Any
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from prometheus_api_client import PrometheusConnect
 from app.core.config import get_settings
@@ -21,14 +21,15 @@ class KubernetesService:
     
     def __init__(self) -> None:
         self.prom = PrometheusConnect(url=settings.prometheus_url, disable_ssl=True)
-        # Simplified cost per core/hour (example: blended rate for m5.large)
-        # In a real app, this would come from AWS Cost Explorer node cost data
-        self.BLENDED_CPU_HOURLY_RATE = 0.04  # $0.04 per vCPU hour
+        # Cost rates loaded from configuration
+        self.cpu_hourly_rate = settings.k8s_cpu_hourly_rate
+        self.memory_hourly_rate = settings.k8s_memory_hourly_rate
 
     def is_available(self) -> bool:
         try:
             return self.prom.check_prometheus_connection()
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Prometheus connection check failed: {e}")
             return False
 
     def get_namespace_costs(self, window: str = "24h") -> list[dict[str, Any]]:
@@ -62,7 +63,7 @@ class KubernetesService:
                 # If window is '24h', we estimate cost for that day
                 hours = 24 if "d" in window or "24h" in window else 1
                 
-                cost = usage_cores * self.BLENDED_CPU_HOURLY_RATE * hours
+                cost = usage_cores * self.cpu_hourly_rate * hours
                 
                 costs.append({
                     "namespace": namespace,

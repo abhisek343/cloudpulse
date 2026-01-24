@@ -8,6 +8,7 @@ from typing import AsyncGenerator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api import chat, kubernetes
 from app.api.router import api_router
 from app.core.cache import cache
 from app.core.config import get_settings
@@ -44,14 +45,13 @@ def create_app() -> FastAPI:
             CORSMiddleware,
             allow_origins=settings.cors_origins,
             allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
+            allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            allow_headers=["Authorization", "Content-Type"],
         )
     
-    # Include API# Routers
+    # Include API Routers
     app.include_router(api_router.router, prefix=settings.api_prefix)
     app.include_router(chat.router, prefix=f"{settings.api_prefix}/chat", tags=["AI Analyst"])
-    from app.api import kubernetes
     app.include_router(kubernetes.router, prefix=f"{settings.api_prefix}/k8s", tags=["Kubernetes"])
     
     return app

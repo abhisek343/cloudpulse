@@ -2,39 +2,95 @@
 CloudPulse AI - Cost Service
 Factory for creating Cost Providers.
 """
-from typing import Dict, Any
+import logging
+from datetime import datetime
+from typing import Any
+
 from app.services.providers.base import CostProvider
 from app.services.providers.aws import AWSCostProvider
 
-# Stubs for other providers
+logger = logging.getLogger(__name__)
+
+
 class AzureCostProvider(CostProvider):
-    def __init__(self, credentials: Dict[str, str]):
+    """
+    Azure Cost Management provider.
+    
+    Note: This is a placeholder implementation. To fully implement:
+    1. Use azure-mgmt-costmanagement SDK
+    2. Authenticate via Azure Identity
+    3. Query Cost Management API
+    
+    See: https://learn.microsoft.com/en-us/python/api/azure-mgmt-costmanagement/
+    """
+    
+    def __init__(self, credentials: dict[str, str]) -> None:
         self.credentials = credentials
+        self.subscription_id = credentials.get("subscription_id")
         
-    async def get_cost_data(self, start_date, end_date, granularity="DAILY"):
-        # TODO: Implement Azure Cost Management API
+    async def get_cost_data(
+        self, 
+        start_date: datetime, 
+        end_date: datetime, 
+        granularity: str = "DAILY"
+    ) -> list[dict[str, Any]]:
+        logger.warning("Azure provider not fully implemented - returning empty data")
         return []
 
-    async def get_forecast(self, start_date, end_date, granularity="MONTHLY"):
+    async def get_forecast(
+        self, 
+        start_date: datetime, 
+        end_date: datetime, 
+        granularity: str = "MONTHLY"
+    ) -> dict[str, Any]:
         return {"total": 0, "unit": "USD", "forecast_by_time": []}
 
+
 class GCPCostProvider(CostProvider):
-    def __init__(self, credentials: Dict[str, str]):
+    """
+    GCP Cloud Billing provider.
+    
+    Note: This is a placeholder implementation. To fully implement:
+    1. Use google-cloud-billing SDK
+    2. Authenticate via service account
+    3. Query BigQuery billing export
+    
+    See: https://cloud.google.com/billing/docs/how-to/export-data-bigquery
+    """
+    
+    def __init__(self, credentials: dict[str, str]) -> None:
         self.credentials = credentials
+        self.project_id = credentials.get("project_id")
         
-    async def get_cost_data(self, start_date, end_date, granularity="DAILY"):
-        # TODO: Implement GCP Billing API
+    async def get_cost_data(
+        self, 
+        start_date: datetime, 
+        end_date: datetime, 
+        granularity: str = "DAILY"
+    ) -> list[dict[str, Any]]:
+        logger.warning("GCP provider not fully implemented - returning empty data")
         return []
 
-    async def get_forecast(self, start_date, end_date, granularity="MONTHLY"):
+    async def get_forecast(
+        self, 
+        start_date: datetime, 
+        end_date: datetime, 
+        granularity: str = "MONTHLY"
+    ) -> dict[str, Any]:
         return {"total": 0, "unit": "USD", "forecast_by_time": []}
 
 
 class ProviderFactory:
     """Factory to get the correct Cost Provider instance."""
     
-    @staticmethod
-    def get_provider(provider_type: str, credentials: Dict[str, Any]) -> CostProvider:
+    _providers: dict[str, type[CostProvider]] = {
+        "aws": AWSCostProvider,
+        "azure": AzureCostProvider,
+        "gcp": GCPCostProvider,
+    }
+    
+    @classmethod
+    def get_provider(cls, provider_type: str, credentials: dict[str, Any]) -> CostProvider:
         """
         Get a cost provider instance.
         
@@ -44,14 +100,20 @@ class ProviderFactory:
             
         Returns:
             Instance of CostProvider
+            
+        Raises:
+            ValueError: If provider_type is not supported
         """
         provider_type = provider_type.lower()
         
-        if provider_type == "aws":
-            return AWSCostProvider(credentials)
-        elif provider_type == "azure":
-            return AzureCostProvider(credentials)
-        elif provider_type == "gcp":
-            return GCPCostProvider(credentials)
-        else:
-            raise ValueError(f"Unsupported provider: {provider_type}")
+        provider_class = cls._providers.get(provider_type)
+        if provider_class is None:
+            supported = ", ".join(cls._providers.keys())
+            raise ValueError(f"Unsupported provider: {provider_type}. Supported: {supported}")
+        
+        return provider_class(credentials)
+    
+    @classmethod
+    def get_supported_providers(cls) -> list[str]:
+        """Get list of supported provider types."""
+        return list(cls._providers.keys())

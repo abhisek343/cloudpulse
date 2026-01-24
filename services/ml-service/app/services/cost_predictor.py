@@ -4,7 +4,7 @@ Cost prediction using Amazon Chronos (Foundation Model).
 """
 import logging
 from datetime import datetime, timedelta
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 import torch
 import numpy as np
@@ -28,12 +28,22 @@ class CostPredictor:
         self.pipeline: Optional[ChronosPipeline] = None
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model_name = f"amazon/chronos-t5-{settings.chronos_model_size}"
+        self._last_training_date: Optional[datetime] = None
+    
+    @property
+    def is_fitted(self) -> bool:
+        """Check if model is loaded and ready for predictions."""
+        return self.pipeline is not None
+    
+    @property
+    def last_training_date(self) -> Optional[datetime]:
+        """Get the last training/initialization date."""
+        return self._last_training_date
         
-    def _load_model(self):
+    def _load_model(self) -> None:
         """Lazy load the heavy model."""
         if self.pipeline is None:
             logger.info(f"Loading Chronos model: {self.model_name} on {self.device}...")
-            # We use map_location="cpu" to ensure it fits in standard containers if GPU missing
             self.pipeline = ChronosPipeline.from_pretrained(
                 self.model_name,
                 device_map=self.device,
@@ -78,14 +88,15 @@ class CostPredictor:
             
         try:
             self._load_model()
-            # We can verify data format here
+            # Verify data format
             _ = self.prepare_data(cost_data)
+            self._last_training_date = datetime.utcnow()
             
             return {
                 "success": True,
                 "model": self.model_name,
                 "status": "Ready (Zero-Shot)",
-                "trained_at": datetime.utcnow().isoformat(),
+                "trained_at": self._last_training_date.isoformat(),
             }
         except Exception as e:
             logger.error(f"Model initialization failed: {e}")
@@ -131,15 +142,17 @@ class CostPredictor:
             lower = torch.quantile(forecast_tensor, 0.1, dim=0).numpy()
             upper = torch.quantile(forecast_tensor, 0.9, dim=0).numpy()
             
-            # 4. Map dates
-            last_date = datetime.strptime(cost_data[-1]["date"], "%Y-%m-%d")
-            if isinstance(cost_data[-1]["date"], datetime):
-                 last_date = cost_data[-1]["date"]
-            elif isinstance(cost_data[-1]["date"], str):
-                 try:
-                    last_date = datetime.strptime(cost_data[-1]["date"], "%Y-%m-%d")
-                 except: 
-                    last_date = datetime.fromisoformat(cost_data[-1]["date"])
+            # 4. Map dates - handle various date formats
+            raw_date = cost_data[-1]["date"]
+            if isinstance(raw_date, datetime):
+                last_date = raw_date
+            elif isinstance(raw_date, str):
+                try:
+                    last_date = datetime.strptime(raw_date, "%Y-%m-%d")
+                except ValueError:
+                    last_date = datetime.fromisoformat(raw_date)
+            else:
+                last_date = datetime.utcnow()
 
             future_dates = [last_date + timedelta(days=i+1) for i in range(days)]
             
@@ -161,7 +174,7 @@ class CostPredictor:
                 "summary": {
                     "total_predicted_cost": round(total_predicted, 2),
                     "model": "Amazon Chronos (Zero-Shot)",
-                    "confidence_level": 0.80, # 10th-90th percentile
+                    "confidence_level": settings.prediction_confidence_threshold,
                 },
             }
             

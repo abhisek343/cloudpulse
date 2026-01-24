@@ -139,6 +139,23 @@ const handleResponse = async (response: Response) => {
     return { success: true, data: await response.json() };
 };
 
+// Chat / AI Analyst
+export interface ChatRequest {
+    message: string;
+    conversation_id?: string;
+}
+
+export interface ChatResponse {
+    response: string;
+    conversation_id: string;
+    context_used: string[];
+}
+
+export async function chatAnalyze(request: ChatRequest): Promise<ChatResponse> {
+    const response = await costApi.post("/chat/analyze", request);
+    return response.data;
+}
+
 // Kubernetes
 export async function getNamespaceCosts() {
     const response = await fetch(`${API_BASE_URL}/api/v1/k8s/namespaces/cost`, {

@@ -187,6 +187,7 @@ async def get_costs_by_service(
     end_date = datetime.utcnow()
     start_date = end_date - timedelta(days=days)
     
+    # Build base query with all filters BEFORE grouping/limit
     query = select(
         CostRecord.service,
         func.sum(CostRecord.amount).label("total_cost"),
@@ -194,14 +195,18 @@ async def get_costs_by_service(
     ).where(
         CostRecord.date >= start_date,
         CostRecord.date <= end_date,
-    ).group_by(
+    )
+    
+    # Apply account filter BEFORE grouping
+    if account_id:
+        query = query.where(CostRecord.cloud_account_id == account_id)
+    
+    # Group and order
+    query = query.group_by(
         CostRecord.service
     ).order_by(
         func.sum(CostRecord.amount).desc()
     ).limit(limit)
-    
-    if account_id:
-        query = query.where(CostRecord.cloud_account_id == account_id)
     
     result = await db.execute(query)
     rows = result.all()
@@ -226,6 +231,7 @@ async def get_costs_by_region(
     end_date = datetime.utcnow()
     start_date = end_date - timedelta(days=days)
     
+    # Build base query with all filters BEFORE grouping
     query = select(
         CostRecord.region,
         func.sum(CostRecord.amount).label("total_cost"),
@@ -233,14 +239,18 @@ async def get_costs_by_region(
         CostRecord.date >= start_date,
         CostRecord.date <= end_date,
         CostRecord.region.isnot(None),
-    ).group_by(
+    )
+    
+    # Apply account filter BEFORE grouping
+    if account_id:
+        query = query.where(CostRecord.cloud_account_id == account_id)
+    
+    # Group and order
+    query = query.group_by(
         CostRecord.region
     ).order_by(
         func.sum(CostRecord.amount).desc()
     )
-    
-    if account_id:
-        query = query.where(CostRecord.cloud_account_id == account_id)
     
     result = await db.execute(query)
     rows = result.all()

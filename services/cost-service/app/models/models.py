@@ -5,7 +5,6 @@ Database models for cost data storage.
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -22,9 +21,6 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
-
-if TYPE_CHECKING:
-    pass
 
 
 class CloudProvider(str, Enum):

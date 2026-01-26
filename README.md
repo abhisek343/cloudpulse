@@ -37,11 +37,13 @@ CloudPulse AI is my answer to: *"What if FinOps tools were actually proactive?"*
 <!-- Add your screenshots/GIFs here -->
 <div align="center">
 
-| Dashboard | Cost Predictions | Chat Interface |
-|:---------:|:----------------:|:--------------:|
-| ![Dashboard](docs/screenshots/dashboard.png) | ![Predictions](docs/screenshots/predictions.png) | ![Chat](docs/screenshots/chat.png) |
+| **Mission Control** | **AI Predictions** |
+|:---:|:---:|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Predictions](docs/screenshots/predictions.png) |
 
-*Screenshots coming soon - run `docker-compose up` to see it live!*
+| **Cloud Accounts** | **FinOps Analyst** |
+|:---:|:---:|
+| ![Accounts](docs/screenshots/accounts.png) | ![Chat](docs/screenshots/chat.png) |
 
 </div>
 
@@ -106,12 +108,19 @@ CloudPulse AI is my answer to: *"What if FinOps tools were actually proactive?"*
     +-------------------+                     +-------------------+
               |                                           |
     ----------|===========================================|----------
-              |                                           |
-              v                                           v
+              |                  |                        |
+              v                  v                        v
     +----------+  +---------+  +------------+  +------------------+
     | Postgres |  |  Redis  |  |  RabbitMQ  |  | Cloud Provider   |
     |   :5432  |  |  :6379  |  |   :5672    |  | APIs (AWS, etc.) |
     +----------+  +---------+  +------------+  +------------------+
+                                     ^
+                                     |
+                          +-------------------+
+                          |    Cost Worker    |
+                          | (Background Job)  |
+                          | - Data Syncing    |
+                          +-------------------+
 ```
 
 ---
@@ -138,7 +147,7 @@ docker-compose exec cost-service python scripts/seed_data.py
 
 | Service | URL | Notes |
 |---------|-----|-------|
-| **Dashboard** | http://localhost:3000 | Main UI |
+| **Dashboard** | http://localhost:3005 | Main UI |
 | **Cost API** | http://localhost:8001/docs | Swagger docs |
 | **ML API** | http://localhost:8002/docs | Swagger docs |
 | **Grafana** | http://localhost:3001 | admin / cloudpulse |
@@ -168,6 +177,7 @@ cloudpulse-ai/
 │   │   │   ├── api/           # REST endpoints
 │   │   │   ├── services/      # Business logic + provider adapters
 │   │   │   └── models/        # SQLAlchemy models
+│   │   ├── worker.py          # Background task worker
 │   │   └── tests/
 │   │
 │   └── ml-service/            # Predictions & anomaly detection

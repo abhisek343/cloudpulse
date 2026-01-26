@@ -66,3 +66,4 @@ secrets/
 tmp/
 temp/
 .tmp/
+deployment/

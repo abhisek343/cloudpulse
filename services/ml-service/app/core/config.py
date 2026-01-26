@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     min_samples_for_training: int = 14
     chronos_model_size: Literal["tiny", "small", "base", "large"] = "tiny"
     
+    # JWT Authentication (for verifying tokens from frontend)
+    jwt_secret_key: str = Field(default="dev-secret-key-change-in-prod-12345")
+    jwt_algorithm: str = "HS256"
+    
     # Anomaly Detection Settings
     anomaly_contamination: float = 0.1  # Expected proportion of outliers
 

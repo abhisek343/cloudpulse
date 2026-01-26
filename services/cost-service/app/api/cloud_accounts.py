@@ -4,12 +4,14 @@ Cloud Accounts management endpoints.
 """
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import get_current_user
 from app.core.database import get_db
-from app.models import CloudAccount
+from app.core.events import publish_sync_task
+from app.models import CloudAccount, User
 from app.schemas import (
     CloudAccountCreate,
     CloudAccountResponse,
@@ -22,6 +24,7 @@ router = APIRouter()
 
 @router.get("/", response_model=PaginatedResponse)
 async def list_cloud_accounts(
+    current_user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -29,9 +32,11 @@ async def list_cloud_accounts(
     is_active: bool | None = None,
 ) -> PaginatedResponse:
     """List all cloud accounts with pagination and filtering."""
-    # Build query
-    query = select(CloudAccount)
-    count_query = select(func.count(CloudAccount.id))
+    # Build query with organization isolation
+    query = select(CloudAccount).where(CloudAccount.organization_id == current_user.organization_id)
+    count_query = select(func.count(CloudAccount.id)).where(
+        CloudAccount.organization_id == current_user.organization_id
+    )
     
     if provider:
         query = query.where(CloudAccount.provider == provider)
@@ -63,20 +68,14 @@ async def list_cloud_accounts(
 @router.post("/", response_model=CloudAccountResponse, status_code=status.HTTP_201_CREATED)
 async def create_cloud_account(
     account_data: CloudAccountCreate,
+    current_user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),
-    # TODO: Add auth dependency to get organization_id from current user
-    # See: https://fastapi.tiangolo.com/tutorial/security/oauth2-jwt/
 ) -> CloudAccountResponse:
     """Create a new cloud account connection."""
-    # PLACEHOLDER: In production, organization_id should come from the authenticated
-    # user's JWT token via a dependency like `current_user: User = Depends(get_current_user)`.
-    # This nil UUID is intentionally obvious to catch any accidental production use.
-    # Implementation priority: Add user authentication before deploying to production.
-    organization_id = "00000000-0000-0000-0000-000000000000"
-    
-    # Check for duplicate
+    # Check for duplicate within organization
     existing = await db.execute(
         select(CloudAccount).where(
+            CloudAccount.organization_id == current_user.organization_id,
             CloudAccount.provider == account_data.provider.value,
             CloudAccount.account_id == account_data.account_id,
         )
@@ -89,7 +88,7 @@ async def create_cloud_account(
     
     # Create account
     account = CloudAccount(
-        organization_id=organization_id,
+        organization_id=current_user.organization_id,
         provider=account_data.provider.value,
         account_id=account_data.account_id,
         account_name=account_data.account_name,
@@ -105,11 +104,15 @@ async def create_cloud_account(
 @router.get("/{account_id}", response_model=CloudAccountResponse)
 async def get_cloud_account(
     account_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),
 ) -> CloudAccountResponse:
     """Get a specific cloud account by ID."""
     result = await db.execute(
-        select(CloudAccount).where(CloudAccount.id == account_id)
+        select(CloudAccount).where(
+            CloudAccount.id == account_id,
+            CloudAccount.organization_id == current_user.organization_id
+        )
     )
     account = result.scalar_one_or_none()
     
@@ -126,11 +129,15 @@ async def get_cloud_account(
 async def update_cloud_account(
     account_id: str,
     update_data: CloudAccountUpdate,
+    current_user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),
 ) -> CloudAccountResponse:
     """Update a cloud account."""
     result = await db.execute(
-        select(CloudAccount).where(CloudAccount.id == account_id)
+        select(CloudAccount).where(
+            CloudAccount.id == account_id,
+            CloudAccount.organization_id == current_user.organization_id
+        )
     )
     account = result.scalar_one_or_none()
     
@@ -154,11 +161,15 @@ async def update_cloud_account(
 @router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_cloud_account(
     account_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Delete a cloud account."""
     result = await db.execute(
-        select(CloudAccount).where(CloudAccount.id == account_id)
+        select(CloudAccount).where(
+            CloudAccount.id == account_id,
+            CloudAccount.organization_id == current_user.organization_id
+        )
     )
     account = result.scalar_one_or_none()
     
@@ -174,11 +185,16 @@ async def delete_cloud_account(
 @router.post("/{account_id}/sync", status_code=status.HTTP_202_ACCEPTED)
 async def trigger_cost_sync(
     account_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Trigger a cost data sync for a cloud account."""
     result = await db.execute(
-        select(CloudAccount).where(CloudAccount.id == account_id)
+        select(CloudAccount).where(
+            CloudAccount.id == account_id,
+            CloudAccount.organization_id == current_user.organization_id
+        )
     )
     account = result.scalar_one_or_none()
     
@@ -188,8 +204,14 @@ async def trigger_cost_sync(
             detail=f"Cloud account {account_id} not found",
         )
     
-    # TODO: Publish sync task to RabbitMQ
-    # For now, return accepted status
+    # Publish sync task to RabbitMQ
+    task = {
+        "type": "sync_account",
+        "account_id": account_id,
+        "days": 30
+    }
+    background_tasks.add_task(publish_sync_task, task)
+
     return {
         "message": "Cost sync initiated",
         "account_id": account_id,

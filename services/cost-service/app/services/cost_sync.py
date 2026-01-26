@@ -2,16 +2,18 @@
 CloudPulse AI - Cost Service
 Cost data synchronization service.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, delete
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import RedisCache
 from app.models import CloudAccount, CostRecord
 from app.services.providers.factory import ProviderFactory
+from app.services.audit_service import AuditService
 
 
 class CostSyncService:
@@ -59,7 +61,7 @@ class CostSyncService:
             }
 
         # Calculate date range
-        end_date = datetime.utcnow()
+        end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(days=days)
         
         # Fetch normalized cost data from provider
@@ -70,42 +72,52 @@ class CostSyncService:
             granularity="DAILY",
         )
         
-        # Store records
-        records_created = 0
-        records_updated = 0
-        
+        if not parsed_records:
+            return {
+                "account_id": cloud_account.id,
+                "records_created": 0,
+                "records_updated": 0,
+                "total_records": 0,
+                "sync_period": {
+                    "start": start_date.isoformat(),
+                    "end": end_date.isoformat(),
+                },
+            }
+
+        # Prepare values for bulk upsert
+        values_to_insert = []
         for record_data in parsed_records:
-            # Check if record already exists
-            existing = await self.db.execute(
-                select(CostRecord).where(
-                    CostRecord.cloud_account_id == cloud_account.id,
-                    CostRecord.date == record_data["date"],
-                    CostRecord.service == record_data["service"],
-                    CostRecord.granularity == "daily",
-                )
-            )
-            existing_record = existing.scalar_one_or_none()
+            values_to_insert.append({
+                "cloud_account_id": cloud_account.id,
+                "date": record_data["date"],
+                "granularity": "daily",
+                "service": record_data["service"],
+                "amount": record_data["amount"],
+                "currency": record_data.get("currency", "USD"),
+            })
             
-            if existing_record:
-                # Update existing record
-                existing_record.amount = record_data["amount"]
-                existing_record.currency = record_data.get("currency", "USD")
-                records_updated += 1
-            else:
-                # Create new record
-                new_record = CostRecord(
-                    cloud_account_id=cloud_account.id,
-                    date=record_data["date"],
-                    granularity="daily",
-                    service=record_data["service"],
-                    amount=record_data["amount"],
-                    currency=record_data.get("currency", "USD"),
-                )
-                self.db.add(new_record)
-                records_created += 1
+        # Perform Bulk Upsert using PostgreSQL ON CONFLICT
+        # We assume a unique constraint exists on (cloud_account_id, date, service, granularity)
+        stmt = insert(CostRecord).values(values_to_insert)
+        
+        # Define what to do on conflict (update the amount and currency)
+        # Note: We need the constraint name or index details, but typically we can infer from columns
+        # If no explicit constraint is defined in models, we might need to rely on delete-then-insert or verify unique index
+        
+        # Ideally, there should be a unique constraint on these columns in the DB model.
+        # Assuming one exists, we update the amount.
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["cloud_account_id", "date", "service", "granularity"],
+            set_={
+                "amount": stmt.excluded.amount,
+                "currency": stmt.excluded.currency,
+            }
+        )
+        
+        await self.db.execute(stmt)
         
         # Update last sync timestamp
-        cloud_account.last_sync_at = datetime.utcnow()
+        cloud_account.last_sync_at = datetime.now(timezone.utc)
         
         # Flush to database
         await self.db.flush()
@@ -114,11 +126,26 @@ class CostSyncService:
         await self.cache.flush_pattern(f"cloudpulse:summary:{cloud_account.id}:*")
         await self.cache.flush_pattern(f"cloudpulse:trend:{cloud_account.id}:*")
         
+        # Log Audit
+        await AuditService.log(
+            self.db,
+            organization_id=cloud_account.organization_id,
+            user_id=None, # System action (unless triggered by user, which we could propagate)
+            action="SYNC",
+            resource_type="cloud_account",
+            resource_id=cloud_account.id,
+            details={
+                "provider": cloud_account.provider, 
+                "records_processed": len(values_to_insert),
+                "period": f"{start_date.date()} to {end_date.date()}"
+            }
+        )
+        # Flush the audit log
+        await self.db.flush()
+        
         return {
             "account_id": cloud_account.id,
-            "records_created": records_created,
-            "records_updated": records_updated,
-            "total_records": records_created + records_updated,
+            "records_processed": len(values_to_insert),
             "sync_period": {
                 "start": start_date.isoformat(),
                 "end": end_date.isoformat(),

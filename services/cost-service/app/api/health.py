@@ -2,7 +2,7 @@
 CloudPulse AI - Cost Service
 Health check endpoints.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
@@ -42,7 +42,7 @@ async def health_check(
         version=settings.app_version,
         database=db_status,
         redis=redis_status,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
     )
 
 

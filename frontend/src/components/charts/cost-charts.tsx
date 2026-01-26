@@ -18,11 +18,13 @@ import { useSimulatorStore } from "@/lib/simulator-store";
 
 interface CostTrendChartProps {
     data: Array<{ date: string; amount: number }>;
+    predictions?: Array<{ date: string; predicted_cost: number; lower_bound: number; upper_bound: number }>;
 }
 
-export function CostTrendChart({ data }: CostTrendChartProps) {
+export function CostTrendChart({ data, predictions }: CostTrendChartProps) {
     const { isEnabled, spotCoverage, reservedCoverage, usageReduction } = useSimulatorStore();
 
+    // Merge historical data and predictions
     const chartData = data.map(item => {
         // Safe conversion of amount
         const amount = typeof item.amount === 'number' ? item.amount : 0;
@@ -32,7 +34,10 @@ export function CostTrendChart({ data }: CostTrendChartProps) {
                 ...item,
                 date: new Date(item.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
                 amount: amount,
-                simulated: null
+                simulated: null,
+                predicted: null,
+                lower: null,
+                upper: null
             };
         }
 
@@ -51,9 +56,26 @@ export function CostTrendChart({ data }: CostTrendChartProps) {
             ...item,
             date: new Date(item.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
             amount: amount,
-            simulated: simulatedAmount
+            simulated: simulatedAmount,
+            predicted: null,
+            lower: null,
+            upper: null
         };
     });
+
+    // Add predictions if available
+    if (predictions && predictions.length > 0) {
+        predictions.forEach(pred => {
+            chartData.push({
+                date: new Date(pred.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+                amount: null as any, // No actual amount for future
+                simulated: null,
+                predicted: pred.predicted_cost,
+                lower: pred.lower_bound,
+                upper: pred.upper_bound,
+            } as any);
+        });
+    }
 
     return (
         <ResponsiveContainer width="100%" height={300}>
@@ -78,9 +100,9 @@ export function CostTrendChart({ data }: CostTrendChartProps) {
                         borderRadius: "0.5rem",
                     }}
                     labelStyle={{ color: "#f3f4f6" }}
-                    formatter={(value: any, name: string) => [
+                    formatter={(value: any, name: any) => [
                         `$${Number(value).toFixed(2)}`,
-                        name === 'simulated' ? 'Projected' : 'Actual'
+                        name === 'simulated' ? 'Projected Savings' : name === 'predicted' ? 'AI Forecast' : 'Actual Cost'
                     ]}
                 />
                 <Area
@@ -91,6 +113,18 @@ export function CostTrendChart({ data }: CostTrendChartProps) {
                     strokeWidth={2}
                     name="Actual"
                 />
+                {/* Prediction Area */}
+                {predictions && predictions.length > 0 && (
+                    <Area
+                        type="monotone"
+                        dataKey="predicted"
+                        stroke="#8b5cf6"
+                        fill="url(#colorActual)" // Reuse for now or add new gradient
+                        strokeWidth={2}
+                        strokeDasharray="5 5"
+                        name="predicted"
+                    />
+                )}
                 {isEnabled && (
                     <Area
                         type="monotone"
@@ -99,7 +133,7 @@ export function CostTrendChart({ data }: CostTrendChartProps) {
                         fill="url(#colorSimulated)"
                         strokeWidth={2}
                         strokeDasharray="5 5"
-                        name="Projected"
+                        name="simulated"
                     />
                 )}
             </AreaChart>

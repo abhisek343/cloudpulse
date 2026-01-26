@@ -1,45 +1,81 @@
 "use client";
 
 import { useState } from "react";
-import { Cloud, Plus, RefreshCw, Trash2, CheckCircle, XCircle } from "lucide-react";
+import { Cloud, Plus, RefreshCw, Trash2, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, ChartCard } from "@/components/ui/card";
-
-// Mock cloud accounts
-const mockAccounts = [
-    {
-        id: "1",
-        provider: "aws",
-        account_id: "123456789012",
-        account_name: "Production Account",
-        is_active: true,
-        last_sync_at: "2026-01-10T14:30:00Z",
-        total_cost_mtd: 8234.56,
-    },
-    {
-        id: "2",
-        provider: "aws",
-        account_id: "987654321098",
-        account_name: "Development Account",
-        is_active: true,
-        last_sync_at: "2026-01-10T14:25:00Z",
-        total_cost_mtd: 2145.32,
-    },
-    {
-        id: "3",
-        provider: "aws",
-        account_id: "456789012345",
-        account_name: "Staging Account",
-        is_active: false,
-        last_sync_at: "2026-01-08T10:00:00Z",
-        total_cost_mtd: 567.89,
-    },
-];
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { getCloudAccounts, addCloudAccount, deleteCloudAccount, syncCloudAccount, CloudAccountCreate } from "@/lib/api";
+import { formatCurrency } from "@/lib/utils";
 
 export default function AccountsPage() {
-    const [accounts] = useState(mockAccounts);
+    const queryClient = useQueryClient();
+    const [isAddOpen, setIsAddOpen] = useState(false);
+    const [newAccount, setNewAccount] = useState<CloudAccountCreate>({
+        provider: "aws",
+        account_name: "",
+        account_id: "",
+        credentials: {},
+    });
+
+    // 1. Fetch Accounts
+    const { data: accountsResult, isLoading } = useQuery({
+        queryKey: ["cloudAccounts"],
+        queryFn: getCloudAccounts,
+    });
+    const accounts = accountsResult?.data?.items || [];
+    const accountsTotal = accountsResult?.data?.total || 0;
+
+    // Mutation: Add Account
+    const addMutation = useMutation({
+        mutationFn: addCloudAccount,
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["cloudAccounts"] });
+            setIsAddOpen(false);
+            setNewAccount({ provider: "aws", account_name: "", account_id: "", credentials: {} });
+        },
+    });
+
+    // Mutation: Delete Account
+    const deleteMutation = useMutation({
+        mutationFn: deleteCloudAccount,
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["cloudAccounts"] });
+        },
+    });
+
+    // Mutation: Sync
+    const syncMutation = useMutation({
+        mutationFn: syncCloudAccount,
+        onSuccess: () => {
+            // Optional: toast notification
+        },
+    });
+
+    const handleAddSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        // Basic validation or credential packing could go here
+        // For AWS, we assume the backend handles the assumption logic or we pass basic fields
+        // For this demo, we'll pass the ID as the credential 'role_arn' mock or similar context if needed
+        // but the schema says 'credentials: dict'.
+        addMutation.mutate(newAccount);
+    };
 
     const activeCount = accounts.filter((a) => a.is_active).length;
-    const totalCost = accounts.reduce((sum, a) => sum + a.total_cost_mtd, 0);
+    // Note: accounts list endpoint currently doesn't return total_cost_mtd (it's in the schema but not populated by simple list usually)
+    // We would need a separate fetch or enrich step. For now, we'll display 0 or remove the dollar aggregate if not available.
+    // Let's assume the backend might populate it or we skip it.
+    const totalCost = 0; // Placeholder until backend aggregates this list view
+
+    if (isLoading) {
+        return (
+            <div className="flex h-[50vh] items-center justify-center">
+                <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-6 p-6">
@@ -47,32 +83,74 @@ export default function AccountsPage() {
             <div className="flex items-center justify-between">
                 <div>
                     <h2 className="text-2xl font-bold text-white">Cloud Accounts</h2>
-                    <p className="text-gray-400">Manage connected AWS accounts</p>
+                    <p className="text-gray-400">Manage connected cloud accounts</p>
                 </div>
-                <button className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-500 to-purple-600 px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity">
-                    <Plus className="h-4 w-4" />
-                    Add Account
-                </button>
+
+                <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
+                    <DialogTrigger asChild>
+                        <Button className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-purple-600 hover:opacity-90">
+                            <Plus className="h-4 w-4" />
+                            Add Account
+                        </Button>
+                    </DialogTrigger>
+                    <DialogContent className="bg-slate-900 border-slate-700 text-white">
+                        <DialogHeader>
+                            <DialogTitle>Connect New Account</DialogTitle>
+                            <DialogDescription>
+                                Enter your AWS Account details.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <form onSubmit={handleAddSubmit} className="space-y-4 mt-4">
+                            <div>
+                                <label className="text-sm font-medium text-gray-400">Account Name</label>
+                                <Input
+                                    value={newAccount.account_name}
+                                    onChange={(e) => setNewAccount({ ...newAccount, account_name: e.target.value })}
+                                    placeholder="e.g. Production AWS"
+                                    className="bg-slate-800 border-slate-700 text-white mt-1"
+                                    required
+                                />
+                            </div>
+                            <div>
+                                <label className="text-sm font-medium text-gray-400">AWS Account ID</label>
+                                <Input
+                                    value={newAccount.account_id}
+                                    onChange={(e) => setNewAccount({ ...newAccount, account_id: e.target.value })}
+                                    placeholder="123456789012"
+                                    className="bg-slate-800 border-slate-700 text-white mt-1"
+                                    required
+                                />
+                            </div>
+                            {/* In a real app, we'd ask for Role ARN here */}
+
+                            <DialogFooter>
+                                <Button type="submit" disabled={addMutation.isPending} className="bg-blue-600">
+                                    {addMutation.isPending ? "Connecting..." : "Connect Account"}
+                                </Button>
+                            </DialogFooter>
+                        </form>
+                    </DialogContent>
+                </Dialog>
             </div>
 
             {/* Stats Cards */}
             <div className="grid gap-6 sm:grid-cols-3">
                 <Card
                     title="Total Accounts"
-                    value={accounts.length.toString()}
+                    value={accountsTotal.toString()}
                     icon={<Cloud className="h-5 w-5" />}
                 />
                 <Card
                     title="Active Accounts"
                     value={activeCount.toString()}
-                    subtitle={`${accounts.length - activeCount} inactive`}
+                    subtitle={`${accountsTotal - activeCount} inactive`}
                     icon={<CheckCircle className="h-5 w-5" />}
                     className="border-green-500/30"
                 />
                 <Card
                     title="Total Cost (MTD)"
-                    value={`$${totalCost.toLocaleString()}`}
-                    subtitle="All accounts"
+                    value={formatCurrency(totalCost)}
+                    subtitle="Aggregated across accounts"
                     icon={<Cloud className="h-5 w-5" />}
                 />
             </div>
@@ -80,7 +158,11 @@ export default function AccountsPage() {
             {/* Accounts List */}
             <ChartCard title="Connected Accounts">
                 <div className="space-y-4">
-                    {accounts.map((account) => (
+                    {accounts.length === 0 ? (
+                        <div className="text-center py-8 text-gray-500">
+                            No accounts connected yet.
+                        </div>
+                    ) : accounts.map((account) => (
                         <div
                             key={account.id}
                             className="flex items-center justify-between rounded-xl bg-gray-800/50 p-4 border border-gray-700 hover:border-gray-600 transition-colors"
@@ -88,7 +170,7 @@ export default function AccountsPage() {
                             <div className="flex items-center gap-4">
                                 {/* Provider Logo */}
                                 <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-orange-500/20">
-                                    <span className="text-lg font-bold text-orange-400">AWS</span>
+                                    <span className="text-lg font-bold text-orange-400">{account.provider.toUpperCase()}</span>
                                 </div>
 
                                 {/* Account Info */}
@@ -111,34 +193,29 @@ export default function AccountsPage() {
                                         Account ID: {account.account_id}
                                     </p>
                                     <p className="text-xs text-gray-500">
-                                        Last sync: {new Date(account.last_sync_at).toLocaleString()}
+                                        Last sync: {account.last_sync_at ? new Date(account.last_sync_at).toLocaleString() : "Never"}
                                     </p>
                                 </div>
                             </div>
 
-                            {/* Cost and Actions */}
-                            <div className="flex items-center gap-6">
-                                <div className="text-right">
-                                    <p className="text-lg font-semibold text-white">
-                                        ${account.total_cost_mtd.toLocaleString()}
-                                    </p>
-                                    <p className="text-xs text-gray-400">Month to date</p>
-                                </div>
-
-                                <div className="flex items-center gap-2">
-                                    <button
-                                        className="rounded-lg bg-gray-700 p-2 text-gray-400 hover:bg-gray-600 hover:text-white transition-colors"
-                                        title="Sync Now"
-                                    >
-                                        <RefreshCw className="h-4 w-4" />
-                                    </button>
-                                    <button
-                                        className="rounded-lg bg-gray-700 p-2 text-gray-400 hover:bg-red-500/20 hover:text-red-400 transition-colors"
-                                        title="Remove Account"
-                                    >
-                                        <Trash2 className="h-4 w-4" />
-                                    </button>
-                                </div>
+                            {/* Actions */}
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => syncMutation.mutate(account.id)}
+                                    className="rounded-lg bg-gray-700 p-2 text-gray-400 hover:bg-gray-600 hover:text-white transition-colors"
+                                    title="Sync Now"
+                                    disabled={syncMutation.isPending}
+                                >
+                                    <RefreshCw className={`h-4 w-4 ${syncMutation.isPending ? "animate-spin" : ""}`} />
+                                </button>
+                                <button
+                                    onClick={() => deleteMutation.mutate(account.id)}
+                                    className="rounded-lg bg-gray-700 p-2 text-gray-400 hover:bg-red-500/20 hover:text-red-400 transition-colors"
+                                    title="Remove Account"
+                                    disabled={deleteMutation.isPending}
+                                >
+                                    <Trash2 className="h-4 w-4" />
+                                </button>
                             </div>
                         </div>
                     ))}
@@ -170,3 +247,4 @@ export default function AccountsPage() {
         </div>
     );
 }
+

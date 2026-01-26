@@ -6,6 +6,7 @@ import logging
 from typing import Any
 from datetime import datetime
 
+from anyio import to_thread
 from prometheus_api_client import PrometheusConnect
 from app.core.config import get_settings
 
@@ -25,19 +26,19 @@ class KubernetesService:
         self.cpu_hourly_rate = settings.k8s_cpu_hourly_rate
         self.memory_hourly_rate = settings.k8s_memory_hourly_rate
 
-    def is_available(self) -> bool:
+    async def is_available(self) -> bool:
         try:
-            return self.prom.check_prometheus_connection()
+            return await to_thread.run_sync(lambda: self.prom.check_prometheus_connection())
         except Exception as e:
             logger.warning(f"Prometheus connection check failed: {e}")
             return False
 
-    def get_namespace_costs(self, window: str = "24h") -> list[dict[str, Any]]:
+    async def get_namespace_costs(self, window: str = "24h") -> list[dict[str, Any]]:
         """
         Calculate cost per namespace based on CPU usage.
         Formula: sum(container_cpu_usage_seconds_total) * CPU_RATE
         """
-        if not self.is_available():
+        if not await self.is_available():
             logger.warning("Prometheus not available. Returning mock data.")
             return self._get_mock_data()
 
@@ -46,8 +47,10 @@ class KubernetesService:
             # We use '1d' or '1h' etc for the rate calculation context
             query = f'sum(rate(container_cpu_usage_seconds_total[{window}])) by (namespace)'
             
-            # Get instantaneous vector
-            result = self.prom.custom_query(query=query)
+            # Get instantaneous vector - Run blocking query in thread
+            result = await to_thread.run_sync(
+                lambda: self.prom.custom_query(query=query)
+            )
             
             costs = []
             for item in result:

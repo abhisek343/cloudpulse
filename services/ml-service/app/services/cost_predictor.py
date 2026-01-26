@@ -3,12 +3,13 @@ CloudPulse AI - ML Service
 Cost prediction using Amazon Chronos (Foundation Model).
 """
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import torch
 import numpy as np
 import pandas as pd
+from anyio import to_thread
 from chronos import ChronosPipeline
 from app.core.config import get_settings
 
@@ -90,7 +91,7 @@ class CostPredictor:
             self._load_model()
             # Verify data format
             _ = self.prepare_data(cost_data)
-            self._last_training_date = datetime.utcnow()
+            self._last_training_date = datetime.now(timezone.utc)
             
             return {
                 "success": True,
@@ -102,7 +103,7 @@ class CostPredictor:
             logger.error(f"Model initialization failed: {e}")
             return {"success": False, "error": str(e)}
 
-    def predict(
+    async def predict(
         self,
         days: int | None = None,
         include_history: bool = False,
@@ -125,13 +126,15 @@ class CostPredictor:
             # 1. Prepare Context
             context_tensor = self.prepare_data(cost_data)
             
-            # 2. Generate Forecast
+            # 2. Generate Forecast - Run in thread to avoid blocking event loop
             # Chronos expects list of contexts. We have 1 series.
             # num_samples=20 allows us to compute confidence intervals
-            forecast = self.pipeline.predict(
-                context=context_tensor,
-                prediction_length=days,
-                num_samples=20, 
+            forecast = await to_thread.run_sync(
+                lambda: self.pipeline.predict(
+                    context=context_tensor,
+                    prediction_length=days,
+                    num_samples=20, 
+                )
             )
             # forecast shape: (1, num_samples, prediction_length)
             
@@ -152,7 +155,7 @@ class CostPredictor:
                 except ValueError:
                     last_date = datetime.fromisoformat(raw_date)
             else:
-                last_date = datetime.utcnow()
+                last_date = datetime.now(timezone.utc)
 
             future_dates = [last_date + timedelta(days=i+1) for i in range(days)]
             

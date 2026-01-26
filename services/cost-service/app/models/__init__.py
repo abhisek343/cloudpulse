@@ -1,5 +1,6 @@
 """Models module exports."""
 from app.models.models import (
+    AuditLog,
     Base,
     Budget,
     CloudAccount,
@@ -12,6 +13,7 @@ from app.models.models import (
 )
 
 __all__ = [
+    "AuditLog",
     "Base",
     "Budget",
     "CloudAccount",

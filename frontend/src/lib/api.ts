@@ -1,7 +1,31 @@
-import axios from "axios";
+import axios, { AxiosInstance, AxiosError } from "axios";
 
 const COST_SERVICE_URL = process.env.NEXT_PUBLIC_COST_SERVICE_URL || "http://localhost:8001";
 const ML_SERVICE_URL = process.env.NEXT_PUBLIC_ML_SERVICE_URL || "http://localhost:8002";
+
+// Add token interceptor helper
+const addAuthInterceptor = (instance: AxiosInstance) => {
+    instance.interceptors.request.use((config) => {
+        const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+        if (token) {
+            config.headers.Authorization = `Bearer ${token}`;
+        }
+        return config;
+    });
+
+    instance.interceptors.response.use(
+        (response) => response,
+        (error: AxiosError) => {
+            if (error.response?.status === 401) {
+                if (typeof window !== "undefined") {
+                    localStorage.removeItem("token");
+                    // Optionally redirect to login
+                }
+            }
+            return Promise.reject(error);
+        }
+    );
+};
 
 // Cost Service Client
 export const costApi = axios.create({
@@ -10,6 +34,7 @@ export const costApi = axios.create({
         "Content-Type": "application/json",
     },
 });
+addAuthInterceptor(costApi);
 
 // ML Service Client
 export const mlApi = axios.create({
@@ -18,34 +43,13 @@ export const mlApi = axios.create({
         "Content-Type": "application/json",
     },
 });
+addAuthInterceptor(mlApi);
 
-// Types
-export interface CostSummary {
-    total_cost: number;
-    currency: string;
-    period_start: string;
-    period_end: string;
-    by_service: Record<string, number>;
-    by_region: Record<string, number>;
-    by_day: Array<{ date: string; amount: number }>;
-}
-
-export interface CostTrend {
-    date: string;
-    amount: number;
-    change_percent: number | null;
-    predicted: boolean;
-}
-
-export interface CloudAccount {
-    id: string;
-    organization_id: string;
-    provider: string;
-    account_id: string;
-    account_name: string;
-    is_active: boolean;
-    last_sync_at: string | null;
-    created_at: string;
+// Standard result wrapper
+export interface ApiResult<T> {
+    success: boolean;
+    data: T;
+    error?: string;
 }
 
 export interface Prediction {
@@ -55,112 +59,121 @@ export interface Prediction {
     upper_bound: number;
 }
 
-export interface PredictionResponse {
-    success: boolean;
-    predictions: Prediction[];
-    summary: {
-        total_predicted_cost: number;
-        average_daily_cost: number;
-        forecast_days: number;
-        confidence_level: number;
-    };
+export interface ModelStatus {
+    predictor_fitted: boolean;
+    detector_fitted: boolean;
+    predictor_last_trained?: string;
+    detector_baseline_stats?: any;
 }
 
-export interface Anomaly {
-    date: string;
-    actual_cost: number;
-    expected_cost: number;
-    deviation_percent: number;
-    severity: "low" | "medium" | "high" | "critical";
-    anomaly_score: number;
-    service: string | null;
+export interface CloudAccount {
+    id: string;
+    provider: string;
+    account_id: string;
+    account_name: string;
+    is_active: boolean;
+    last_sync_at?: string;
+    total_cost_mtd?: number; // Fetched separately or enriched
 }
 
-export interface AnomalyResponse {
-    success: boolean;
-    total_records: number;
-    anomalies_found: number;
-    anomaly_rate: number;
-    anomalies: Anomaly[];
+export interface CloudAccountCreate {
+    provider: "aws" | "gcp" | "azure";
+    account_id: string;
+    account_name: string;
+    credentials?: Record<string, any>;
+}
+
+
+
+const safeCall = async <T>(promise: Promise<any>): Promise<ApiResult<T>> => {
+    try {
+        const response = await promise;
+        return { success: true, data: response.data };
+    } catch (error: any) {
+        return {
+            success: false,
+            data: null as any,
+            error: error.response?.data?.detail || error.message || "An unknown error occurred",
+        };
+    }
+};
+
+// Auth API Functions
+export async function login(email: string, password: string) {
+    const formData = new FormData();
+    formData.append("username", email);
+    formData.append("password", password);
+
+    return safeCall<{ access_token: string; token_type: string }>(
+        costApi.post("/auth/login", formData, {
+            headers: { "Content-Type": "multipart/form-data" }
+        })
+    );
+}
+
+export async function register(email: string, password: string, organization_name: string, full_name?: string) {
+    return safeCall<any>(
+        costApi.post("/auth/register", { email, password, organization_name, full_name })
+    );
+}
+
+export async function getMe() {
+    return safeCall<any>(costApi.get("/auth/me"));
 }
 
 // Cost Service API Functions
-export async function getCostSummary(days = 30): Promise<CostSummary> {
-    const response = await costApi.get("/costs/summary", { params: { days } });
-    return response.data;
+export async function getCostSummary(days = 30) {
+    return safeCall<any>(costApi.get("/costs/summary", { params: { days } }));
 }
 
-export async function getCostTrend(days = 30): Promise<CostTrend[]> {
-    const response = await costApi.get("/costs/trend", { params: { days } });
-    return response.data;
+export async function getCostTrend(days = 30) {
+    return safeCall<any>(costApi.get("/costs/trend", { params: { days } }));
 }
 
-export async function getCostsByService(days = 30): Promise<Array<{ service: string; total_cost: number }>> {
-    const response = await costApi.get("/costs/by-service", { params: { days } });
-    return response.data;
+export async function getCostsByService(days = 30) {
+    return safeCall<any>(costApi.get("/costs/by-service", { params: { days } }));
 }
 
-export async function getCostsByRegion(days = 30): Promise<Array<{ region: string; total_cost: number }>> {
-    const response = await costApi.get("/costs/by-region", { params: { days } });
-    return response.data;
+export async function getCostsByRegion(days = 30) {
+    return safeCall<any>(costApi.get("/costs/by-region", { params: { days } }));
 }
 
-export async function getCloudAccounts(): Promise<{ items: CloudAccount[]; total: number }> {
-    const response = await costApi.get("/accounts/");
-    return response.data;
+export async function getCloudAccounts() {
+    return safeCall<{ items: CloudAccount[], total: number }>(costApi.get("/accounts/"));
 }
+
+export async function addCloudAccount(data: CloudAccountCreate) {
+    return safeCall<CloudAccount>(costApi.post("/accounts/", data));
+}
+
+export async function deleteCloudAccount(id: string) {
+    return safeCall<void>(costApi.delete(`/accounts/${id}`));
+}
+
+export async function syncCloudAccount(id: string) {
+    return safeCall<any>(costApi.post(`/accounts/${id}/sync`));
+}
+
 
 // ML Service API Functions
-export async function getPredictions(days = 30): Promise<PredictionResponse> {
-    const response = await mlApi.post("/ml/predict", { days });
-    return response.data;
+export async function getPredictions(days = 30) {
+    return safeCall<any>(mlApi.post("/ml/predict", { days }));
 }
 
-export async function getAnomalies(costData: Array<{ date: string; amount: number }>): Promise<AnomalyResponse> {
-    const response = await mlApi.post("/ml/detect", { cost_data: costData });
-    return response.data;
+export async function getAnomalies(costData: any[]) {
+    return safeCall<any>(mlApi.post("/ml/detect", { cost_data: costData }));
 }
 
-export async function getModelStatus(): Promise<{
-    predictor_fitted: boolean;
-    detector_fitted: boolean;
-}> {
-    const response = await mlApi.get("/ml/status");
-    return response.data;
+export async function getModelStatus() {
+    return safeCall<any>(mlApi.get("/ml/status"));
 }
-// Helpers
-const API_BASE_URL = COST_SERVICE_URL;
-
-const handleResponse = async (response: Response) => {
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || response.statusText);
-    }
-    return { success: true, data: await response.json() };
-};
 
 // Chat / AI Analyst
-export interface ChatRequest {
-    message: string;
-    conversation_id?: string;
-}
-
-export interface ChatResponse {
-    response: string;
-    conversation_id: string;
-    context_used: string[];
-}
-
-export async function chatAnalyze(request: ChatRequest): Promise<ChatResponse> {
-    const response = await costApi.post("/chat/analyze", request);
-    return response.data;
+export async function chatAnalyze(request: { message: string; conversation_id?: string }) {
+    return safeCall<any>(costApi.post("/chat/analyze", request));
 }
 
 // Kubernetes
 export async function getNamespaceCosts() {
-    const response = await fetch(`${API_BASE_URL}/api/v1/k8s/namespaces/cost`, {
-        method: "GET",
-        headers: { "Content-Type": "application/json" },
-    });
-    return handleResponse(response);
+    return safeCall<any>(costApi.get("/kubernetes/namespaces/cost"));
 }

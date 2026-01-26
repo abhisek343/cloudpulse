@@ -26,6 +26,10 @@ dependencies = [
     "email-validator>=2.1.0",
     "litellm>=1.0.0",
     "prometheus-api-client>=0.5.0",
+    "azure-identity>=1.15.0",
+    "azure-mgmt-costmanagement>=4.0.0",
+    "google-cloud-billing>=1.13.0",
+    "google-auth>=2.27.0",
 ]
 
 [project.optional-dependencies]

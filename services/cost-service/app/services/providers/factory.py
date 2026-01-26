@@ -8,76 +8,10 @@ from typing import Any
 
 from app.services.providers.base import CostProvider
 from app.services.providers.aws import AWSCostProvider
+from app.services.providers.azure import AzureProvider
+from app.services.providers.gcp import GCPProvider
 
 logger = logging.getLogger(__name__)
-
-
-class AzureCostProvider(CostProvider):
-    """
-    Azure Cost Management provider.
-    
-    Note: This is a placeholder implementation. To fully implement:
-    1. Use azure-mgmt-costmanagement SDK
-    2. Authenticate via Azure Identity
-    3. Query Cost Management API
-    
-    See: https://learn.microsoft.com/en-us/python/api/azure-mgmt-costmanagement/
-    """
-    
-    def __init__(self, credentials: dict[str, str]) -> None:
-        self.credentials = credentials
-        self.subscription_id = credentials.get("subscription_id")
-        
-    async def get_cost_data(
-        self, 
-        start_date: datetime, 
-        end_date: datetime, 
-        granularity: str = "DAILY"
-    ) -> list[dict[str, Any]]:
-        logger.warning("Azure provider not fully implemented - returning empty data")
-        return []
-
-    async def get_forecast(
-        self, 
-        start_date: datetime, 
-        end_date: datetime, 
-        granularity: str = "MONTHLY"
-    ) -> dict[str, Any]:
-        return {"total": 0, "unit": "USD", "forecast_by_time": []}
-
-
-class GCPCostProvider(CostProvider):
-    """
-    GCP Cloud Billing provider.
-    
-    Note: This is a placeholder implementation. To fully implement:
-    1. Use google-cloud-billing SDK
-    2. Authenticate via service account
-    3. Query BigQuery billing export
-    
-    See: https://cloud.google.com/billing/docs/how-to/export-data-bigquery
-    """
-    
-    def __init__(self, credentials: dict[str, str]) -> None:
-        self.credentials = credentials
-        self.project_id = credentials.get("project_id")
-        
-    async def get_cost_data(
-        self, 
-        start_date: datetime, 
-        end_date: datetime, 
-        granularity: str = "DAILY"
-    ) -> list[dict[str, Any]]:
-        logger.warning("GCP provider not fully implemented - returning empty data")
-        return []
-
-    async def get_forecast(
-        self, 
-        start_date: datetime, 
-        end_date: datetime, 
-        granularity: str = "MONTHLY"
-    ) -> dict[str, Any]:
-        return {"total": 0, "unit": "USD", "forecast_by_time": []}
 
 
 class ProviderFactory:
@@ -85,8 +19,8 @@ class ProviderFactory:
     
     _providers: dict[str, type[CostProvider]] = {
         "aws": AWSCostProvider,
-        "azure": AzureCostProvider,
-        "gcp": GCPCostProvider,
+        "azure": AzureProvider,
+        "gcp": GCPProvider,
     }
     
     @classmethod

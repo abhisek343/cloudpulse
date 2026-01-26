@@ -2,9 +2,11 @@
 CloudPulse AI - ML Service
 API endpoints for predictions and anomaly detection.
 """
-from fastapi import APIRouter, HTTPException, status
+from typing import Annotated
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.config import get_settings
+from app.api.auth import get_current_user, TokenPayload
 from app.models import (
     DetectAnomaliesRequest,
     DetectResponse,
@@ -23,7 +25,10 @@ settings = get_settings()
 
 
 @router.post("/train", response_model=TrainResponse)
-async def train_models(request: TrainRequest) -> TrainResponse:
+async def train_models(
+    request: TrainRequest,
+    current_user: Annotated[TokenPayload, Depends(get_current_user)],
+) -> TrainResponse:
     """
     Train both prediction and anomaly detection models.
     
@@ -59,7 +64,10 @@ async def train_models(request: TrainRequest) -> TrainResponse:
 
 
 @router.post("/predict", response_model=PredictResponse)
-async def predict_costs(request: PredictRequest) -> PredictResponse:
+async def predict_costs(
+    request: PredictRequest,
+    current_user: Annotated[TokenPayload, Depends(get_current_user)],
+) -> PredictResponse:
     """
     Predict future costs for the specified number of days.
     
@@ -73,9 +81,22 @@ async def predict_costs(request: PredictRequest) -> PredictResponse:
             detail="Model not trained. Call /train endpoint first.",
         )
     
-    result = predictor.predict(
+    # Predict costs
+    # Convert to list of dicts
+    cost_data = [
+        {
+            "date": point.date,
+            "amount": float(point.amount),
+            "service": point.service,
+        }
+        for point in request.cost_data
+    ]
+    
+    # Predict costs
+    result = await predictor.predict(
         days=request.days,
         include_history=request.include_history,
+        cost_data=cost_data # Pass context
     )
     
     if not result.get("success"):
@@ -92,7 +113,10 @@ async def predict_costs(request: PredictRequest) -> PredictResponse:
 
 
 @router.post("/detect", response_model=DetectResponse)
-async def detect_anomalies(request: DetectAnomaliesRequest) -> DetectResponse:
+async def detect_anomalies(
+    request: DetectAnomaliesRequest,
+    current_user: Annotated[TokenPayload, Depends(get_current_user)],
+) -> DetectResponse:
     """
     Detect anomalies in the provided cost data.
     
@@ -138,7 +162,10 @@ async def detect_anomalies(request: DetectAnomaliesRequest) -> DetectResponse:
 
 
 @router.post("/detect/single", response_model=SingleAnomalyResponse)
-async def check_single_anomaly(request: SingleAnomalyCheckRequest) -> SingleAnomalyResponse:
+async def check_single_anomaly(
+    request: SingleAnomalyCheckRequest,
+    current_user: Annotated[TokenPayload, Depends(get_current_user)],
+) -> SingleAnomalyResponse:
     """
     Quick check if a single cost record is anomalous.
     

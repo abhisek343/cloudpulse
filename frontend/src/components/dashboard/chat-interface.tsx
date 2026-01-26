@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Bot, X, Send, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card } from "@/components/ui/card";
+import { CardBase as Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { chatAnalyze } from "@/lib/api";
 
@@ -34,10 +34,10 @@ export function ChatInterface() {
         setIsLoading(true);
 
         try {
-            const response = await chatAnalyze(userMessage);
+            const response = await chatAnalyze({ message: userMessage });
 
             const content = response.success
-                ? response.response
+                ? response.data.response // Use response.data.response because ApiResult wraps the response
                 : "I'm having trouble connecting to the brain. Please check your API key.";
 
             setMessages((prev) => [...prev, { role: "assistant", content }]);

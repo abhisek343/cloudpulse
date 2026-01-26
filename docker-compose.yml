@@ -76,6 +76,31 @@ services:
       - ./services/cost-service/app:/app/app:ro
     restart: unless-stopped
 
+  # Cost Worker (Background Tasks)
+  cost-worker:
+    build:
+      context: ./services/cost-service
+      dockerfile: Dockerfile
+    container_name: cloudpulse-cost-worker
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/cloudpulse
+      REDIS_URL: redis://redis:6379/0
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      ENVIRONMENT: development
+    command: python -m app.worker
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ./services/cost-service/app:/app/app:ro
+    restart: unless-stopped
+
   # ML Service
   ml-service:
     build:

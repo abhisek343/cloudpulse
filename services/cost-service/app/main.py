@@ -50,7 +50,7 @@ def create_app() -> FastAPI:
         )
     
     # Include API Routers
-    app.include_router(api_router.router, prefix=settings.api_prefix)
+    app.include_router(api_router, prefix=settings.api_prefix)
     app.include_router(chat.router, prefix=f"{settings.api_prefix}/chat", tags=["AI Analyst"])
     app.include_router(kubernetes.router, prefix=f"{settings.api_prefix}/k8s", tags=["Kubernetes"])
     

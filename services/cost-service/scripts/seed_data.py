@@ -4,7 +4,7 @@ Generates realistic demo data for testing SOTA forecasting.
 """
 import asyncio
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -47,7 +47,7 @@ async def seed_data():
         print(f"Created Demo Account: {demo_account.id}")
         
         # 2. Generate 180 days of history
-        end_date = datetime.utcnow().date()
+        end_date = datetime.now(timezone.utc).date()
         start_date = end_date - timedelta(days=180)
         
         records = []

@@ -30,7 +30,7 @@ async def get_namespace_costs(
         )
 
     try:
-        return k8s_service.get_namespace_costs(window=window)
+        return await k8s_service.get_namespace_costs(window=window)
     except Exception as e:
         raise HTTPException(
             status_code=500,

@@ -2,7 +2,7 @@
 CloudPulse AI - Cost Service
 Cost data endpoints - querying and aggregations.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Annotated
 
@@ -10,9 +10,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import get_current_user
 from app.core.cache import RedisCache, get_cache
 from app.core.database import get_db
-from app.models import CloudAccount, CostRecord
+from app.models import CloudAccount, CostRecord, User
 from app.schemas import (
     CostRecordResponse,
     CostSummary,
@@ -25,6 +26,7 @@ router = APIRouter()
 
 @router.get("/summary", response_model=CostSummary)
 async def get_cost_summary(
+    current_user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),
     cache: RedisCache = Depends(get_cache),
     account_id: str | None = None,
@@ -33,9 +35,10 @@ async def get_cost_summary(
     region: str | None = None,
 ) -> CostSummary:
     """Get aggregated cost summary for the specified period."""
-    # Generate cache key
+    # Generate cache key with organization isolation
     cache_key = cache.generate_key(
         "summary",
+        current_user.organization_id,
         account_id or "all",
         str(days),
         service or "all",
@@ -48,11 +51,12 @@ async def get_cost_summary(
         return CostSummary(**cached)
     
     # Calculate date range
-    end_date = datetime.utcnow()
+    end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=days)
     
-    # Build base query
-    query = select(CostRecord).where(
+    # Build base query with organization isolation via join
+    query = select(CostRecord).join(CloudAccount).where(
+        CloudAccount.organization_id == current_user.organization_id,
         CostRecord.date >= start_date,
         CostRecord.date <= end_date,
     )
@@ -119,6 +123,7 @@ async def get_cost_summary(
 
 @router.get("/trend", response_model=list[CostTrend])
 async def get_cost_trend(
+    current_user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),
     cache: RedisCache = Depends(get_cache),
     account_id: str | None = None,
@@ -126,20 +131,27 @@ async def get_cost_trend(
     granularity: str = "daily",
 ) -> list[CostTrend]:
     """Get cost trend data for visualization."""
-    cache_key = cache.generate_key("trend", account_id or "all", str(days), granularity)
+    cache_key = cache.generate_key(
+        "trend", 
+        current_user.organization_id,
+        account_id or "all", 
+        str(days), 
+        granularity
+    )
     
     cached = await cache.get(cache_key)
     if cached:
         return [CostTrend(**item) for item in cached]
     
-    end_date = datetime.utcnow()
+    end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=days)
     
-    # Query daily costs
+    # Query daily costs with organization isolation
     query = select(
         func.date_trunc("day", CostRecord.date).label("day"),
         func.sum(CostRecord.amount).label("total"),
-    ).where(
+    ).join(CloudAccount).where(
+        CloudAccount.organization_id == current_user.organization_id,
         CostRecord.date >= start_date,
         CostRecord.date <= end_date,
     ).group_by(
@@ -178,26 +190,28 @@ async def get_cost_trend(
 
 @router.get("/by-service")
 async def get_costs_by_service(
+    current_user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),
     account_id: str | None = None,
     days: Annotated[int, Query(ge=1, le=365)] = 30,
     limit: Annotated[int, Query(ge=1, le=50)] = 10,
 ) -> list[dict]:
     """Get top services by cost."""
-    end_date = datetime.utcnow()
+    end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=days)
     
-    # Build base query with all filters BEFORE grouping/limit
+    # Build base query with organization isolation
     query = select(
         CostRecord.service,
         func.sum(CostRecord.amount).label("total_cost"),
         func.count(CostRecord.id).label("record_count"),
-    ).where(
+    ).join(CloudAccount).where(
+        CloudAccount.organization_id == current_user.organization_id,
         CostRecord.date >= start_date,
         CostRecord.date <= end_date,
     )
     
-    # Apply account filter BEFORE grouping
+    # Apply account filter
     if account_id:
         query = query.where(CostRecord.cloud_account_id == account_id)
     
@@ -223,25 +237,27 @@ async def get_costs_by_service(
 
 @router.get("/by-region")
 async def get_costs_by_region(
+    current_user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),
     account_id: str | None = None,
     days: Annotated[int, Query(ge=1, le=365)] = 30,
 ) -> list[dict]:
     """Get costs grouped by region."""
-    end_date = datetime.utcnow()
+    end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=days)
     
-    # Build base query with all filters BEFORE grouping
+    # Build base query with organization isolation
     query = select(
         CostRecord.region,
         func.sum(CostRecord.amount).label("total_cost"),
-    ).where(
+    ).join(CloudAccount).where(
+        CloudAccount.organization_id == current_user.organization_id,
         CostRecord.date >= start_date,
         CostRecord.date <= end_date,
         CostRecord.region.isnot(None),
     )
     
-    # Apply account filter BEFORE grouping
+    # Apply account filter
     if account_id:
         query = query.where(CostRecord.cloud_account_id == account_id)
     
@@ -266,6 +282,7 @@ async def get_costs_by_region(
 
 @router.get("/records", response_model=PaginatedResponse)
 async def list_cost_records(
+    current_user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 50,
@@ -276,8 +293,12 @@ async def list_cost_records(
     end_date: datetime | None = None,
 ) -> PaginatedResponse:
     """List individual cost records with filtering and pagination."""
-    query = select(CostRecord)
-    count_query = select(func.count(CostRecord.id))
+    query = select(CostRecord).join(CloudAccount).where(
+        CloudAccount.organization_id == current_user.organization_id
+    )
+    count_query = select(func.count(CostRecord.id)).join(CloudAccount).where(
+        CloudAccount.organization_id == current_user.organization_id
+    )
     
     # Apply filters
     if account_id:

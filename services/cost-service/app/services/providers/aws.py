@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Any
 
 import boto3
+from anyio import to_thread
 from botocore.exceptions import ClientError
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -58,7 +59,11 @@ class AWSCostProvider(CostProvider):
                 if next_token:
                     params["NextPageToken"] = next_token
                 
-                response = self.client.get_cost_and_usage(**params)
+                # Run blocking boto3 call in a separate thread
+                response = await to_thread.run_sync(
+                    lambda: self.client.get_cost_and_usage(**params)
+                )
+                
                 results.extend(response.get("ResultsByTime", []))
                 next_token = response.get("NextPageToken")
                 
@@ -78,13 +83,16 @@ class AWSCostProvider(CostProvider):
         granularity: str = "MONTHLY"
     ) -> dict[str, Any]:
         try:
-            response = self.client.get_cost_forecast(
-                TimePeriod={
-                    "Start": start_date.strftime("%Y-%m-%d"),
-                    "End": end_date.strftime("%Y-%m-%d"),
-                },
-                Granularity=granularity,
-                Metric="UNBLENDED_COST",
+            # Run blocking boto3 call in a separate thread
+            response = await to_thread.run_sync(
+                lambda: self.client.get_cost_forecast(
+                    TimePeriod={
+                        "Start": start_date.strftime("%Y-%m-%d"),
+                        "End": end_date.strftime("%Y-%m-%d"),
+                    },
+                    Granularity=granularity,
+                    Metric="UNBLENDED_COST",
+                )
             )
             return {
                 "total": Decimal(response.get("Total", {}).get("Amount", "0")),

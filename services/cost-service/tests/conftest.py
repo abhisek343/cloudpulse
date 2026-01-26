@@ -88,11 +88,11 @@ def sample_cloud_account_data() -> dict:
 @pytest.fixture
 def sample_cost_record_data() -> dict:
     """Sample cost record data for tests."""
-    from datetime import datetime
+    from datetime import datetime, timezone
     from decimal import Decimal
     
     return {
-        "date": datetime.utcnow(),
+        "date": datetime.now(timezone.utc),
         "granularity": "daily",
         "service": "Amazon EC2",
         "region": "us-east-1",

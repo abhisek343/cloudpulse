@@ -61,8 +61,8 @@ async def analyze_cost_chat(
         
         provider = ProviderFactory.get_provider(provider_type, credentials)
         
-        from datetime import datetime, timedelta
-        end_date = datetime.utcnow()
+        from datetime import datetime, timedelta, timezone
+        end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(days=30)
         
         # Get standardized cost data

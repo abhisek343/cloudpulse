@@ -268,16 +268,7 @@ Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines
 
 MIT License - see [LICENSE](LICENSE) for details.
 
----
 
-## Author
-
-**Abhisek Behera**
-
-[![GitHub](https://img.shields.io/badge/GitHub-@abhisek343-black?style=flat-square&logo=github)](https://github.com/abhisek343)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-abhiske343-blue?style=flat-square&logo=linkedin)](https://www.linkedin.com/in/abhiske343/)
-
----
 
 <div align="center">
 

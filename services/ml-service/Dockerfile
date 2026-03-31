@@ -6,12 +6,12 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
 COPY pyproject.toml README.md ./
-RUN pip install --no-cache-dir -e .
-RUN pip install "git+https://github.com/amazon-science/chronos-forecasting.git"
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -e '.[inference]'
 
 # Copy application code
 COPY app/ ./app/
@@ -27,4 +27,4 @@ USER appuser
 EXPOSE 8000
 
 # Run with uvicorn
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-7860}
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

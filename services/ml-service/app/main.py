@@ -10,6 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.ml import router as ml_router
 from app.core.config import get_settings
+from app.core.observability import ObservabilityMiddleware, metrics_response
+from app.core.tracing import setup_tracing
 
 settings = get_settings()
 
@@ -18,8 +20,10 @@ settings = get_settings()
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan handler."""
     # Startup - nothing to initialize for ML service
+    flush_traces = setup_tracing(app)
     yield
     # Shutdown
+    flush_traces()
 
 
 def create_app() -> FastAPI:
@@ -33,6 +37,8 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
         lifespan=lifespan,
     )
+
+    app.add_middleware(ObservabilityMiddleware)
     
     # CORS middleware
     app.add_middleware(
@@ -79,3 +85,9 @@ async def root() -> dict:
         "version": settings.app_version,
         "docs": "/docs",
     }
+
+
+@app.get("/metrics")
+async def metrics() -> object:
+    """Prometheus scrape endpoint."""
+    return metrics_response()

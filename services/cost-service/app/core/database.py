@@ -4,7 +4,10 @@ Database connection and session management.
 """
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -65,9 +68,15 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db() -> None:
-    """Initialize database tables."""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    """Initialize the database schema by applying Alembic migrations."""
+    import app.models  # noqa: F401
+
+    if not settings.enable_startup_migrations:
+        return
+
+    alembic_config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+    alembic_config.set_main_option("sqlalchemy.url", str(settings.database_url))
+    command.upgrade(alembic_config, "head")
 
 
 async def close_db() -> None:

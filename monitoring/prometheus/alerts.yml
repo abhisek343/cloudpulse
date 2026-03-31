@@ -1,0 +1,33 @@
+groups:
+  - name: cloudpulse-service-alerts
+    rules:
+      - alert: CloudPulseCostServiceHighErrorRate
+        expr: |
+          sum(rate(cloudpulse_cost_service_http_requests_total{status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(cloudpulse_cost_service_http_requests_total[5m])), 0.001)
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Cost service error rate is above 5%
+          description: The cost-service has sustained a high 5xx error rate for 5 minutes.
+
+      - alert: CloudPulseSyncJobsSlow
+        expr: histogram_quantile(0.95, sum(rate(cloudpulse_cost_service_sync_duration_seconds_bucket[10m])) by (le, provider)) > 60
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Cloud account sync jobs are slow
+          description: The 95th percentile sync duration is above 60 seconds over the last 10 minutes.
+
+      - alert: CloudPulsePredictionLatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(cloudpulse_ml_service_prediction_duration_seconds_bucket[10m])) by (le, status)) > 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: ML predictions are slow
+          description: The 95th percentile prediction latency is above 10 seconds over the last 10 minutes.

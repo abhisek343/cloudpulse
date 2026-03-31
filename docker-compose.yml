@@ -5,10 +5,10 @@ services:
     container_name: cloudpulse-db
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: cloudpulse-dev-password
       POSTGRES_DB: cloudpulse
     ports:
-      - "5432:5432"
+      - "55433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -36,8 +36,8 @@ services:
     image: rabbitmq:3.12-management-alpine
     container_name: cloudpulse-rabbitmq
     environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_DEFAULT_USER: cloudpulse
+      RABBITMQ_DEFAULT_PASS: cloudpulse-dev-password
     ports:
       - "5672:5672"
       - "15672:15672" # Management UI
@@ -58,11 +58,14 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/cloudpulse
+      DATABASE_URL: postgresql+asyncpg://postgres:cloudpulse-dev-password@db:5432/cloudpulse
       REDIS_URL: redis://redis:6379/0
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      RABBITMQ_URL: amqp://cloudpulse:cloudpulse-dev-password@rabbitmq:5672/
       ENVIRONMENT: development
       DEBUG: "true"
+      OTEL_ENABLED: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
     ports:
       - "8001:8000"
     depends_on:
@@ -72,8 +75,11 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     volumes:
       - ./services/cost-service/app:/app/app:ro
+      - ./services/cost-service/scripts:/app/scripts:ro
     restart: unless-stopped
 
   # Cost Worker (Background Tasks)
@@ -85,10 +91,14 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/cloudpulse
+      DATABASE_URL: postgresql+asyncpg://postgres:cloudpulse-dev-password@db:5432/cloudpulse
       REDIS_URL: redis://redis:6379/0
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      RABBITMQ_URL: amqp://cloudpulse:cloudpulse-dev-password@rabbitmq:5672/
       ENVIRONMENT: development
+      OTEL_ENABLED: "true"
+      OTEL_SERVICE_NAME: cloudpulse-cost-worker
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
     command: python -m app.worker
     depends_on:
       db:
@@ -97,8 +107,11 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     volumes:
       - ./services/cost-service/app:/app/app:ro
+      - ./services/cost-service/scripts:/app/scripts:ro
     restart: unless-stopped
 
   # ML Service
@@ -112,13 +125,18 @@ services:
     environment:
       COST_SERVICE_URL: http://cost-service:8000
       REDIS_URL: redis://redis:6379/1
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      RABBITMQ_URL: amqp://cloudpulse:cloudpulse-dev-password@rabbitmq:5672/
       ENVIRONMENT: development
+      OTEL_ENABLED: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
     ports:
       - "8002:8000"
     depends_on:
       redis:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     volumes:
       - ./services/ml-service/app:/app/app:ro
       - ml_models:/app/models
@@ -129,10 +147,17 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_COST_SERVICE_URL: ${NEXT_PUBLIC_COST_SERVICE_URL:-http://localhost:8001}
+        NEXT_PUBLIC_ML_SERVICE_URL: ${NEXT_PUBLIC_ML_SERVICE_URL:-http://localhost:8002}
+        NEXT_PUBLIC_DEFAULT_ACCOUNT_PROVIDER: ${NEXT_PUBLIC_DEFAULT_ACCOUNT_PROVIDER:-demo}
+        NEXT_PUBLIC_DEFAULT_DEMO_SCENARIO: ${NEXT_PUBLIC_DEFAULT_DEMO_SCENARIO:-saas}
     container_name: cloudpulse-frontend
     environment:
-      NEXT_PUBLIC_COST_SERVICE_URL: http://localhost:8001
-      NEXT_PUBLIC_ML_SERVICE_URL: http://localhost:8002
+      NEXT_PUBLIC_COST_SERVICE_URL: ${NEXT_PUBLIC_COST_SERVICE_URL:-http://localhost:8001}
+      NEXT_PUBLIC_ML_SERVICE_URL: ${NEXT_PUBLIC_ML_SERVICE_URL:-http://localhost:8002}
+      NEXT_PUBLIC_DEFAULT_ACCOUNT_PROVIDER: ${NEXT_PUBLIC_DEFAULT_ACCOUNT_PROVIDER:-demo}
+      NEXT_PUBLIC_DEFAULT_DEMO_SCENARIO: ${NEXT_PUBLIC_DEFAULT_DEMO_SCENARIO:-saas}
     ports:
       - "3005:3000"
     depends_on:
@@ -146,6 +171,7 @@ services:
     container_name: cloudpulse-prometheus
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus_data:/prometheus
     ports:
       - "9090:9090"
@@ -153,6 +179,32 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--web.enable-lifecycle"
+    restart: unless-stopped
+
+  # Tempo trace backend
+  tempo:
+    image: grafana/tempo:2.5.0
+    container_name: cloudpulse-tempo
+    command: ["-config.file=/etc/tempo/tempo.yml"]
+    volumes:
+      - ./monitoring/tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo_data:/var/tempo
+    ports:
+      - "3200:3200"
+    restart: unless-stopped
+
+  # OpenTelemetry Collector
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.102.1
+    container_name: cloudpulse-otel-collector
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./monitoring/otel/collector.yml:/etc/otelcol-contrib/config.yaml:ro
+    depends_on:
+      - tempo
+    ports:
+      - "4317:4317"
+      - "4318:4318"
     restart: unless-stopped
 
   # Grafana
@@ -171,6 +223,7 @@ services:
       - "3001:3000"
     depends_on:
       - prometheus
+      - tempo
     restart: unless-stopped
 
 volumes:
@@ -180,3 +233,4 @@ volumes:
   ml_models:
   prometheus_data:
   grafana_data:
+  tempo_data:

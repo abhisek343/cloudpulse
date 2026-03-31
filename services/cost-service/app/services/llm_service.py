@@ -6,6 +6,7 @@ import json
 import logging
 from typing import Any
 
+import httpx
 from litellm import completion
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -34,7 +35,46 @@ class LLMService:
             return f"gemini/{self.model}"
         elif self.provider == "anthropic" and not self.model.startswith("claude"):
              return f"anthropic/{self.model}"
+        elif self.provider == "openrouter" and self.model == "free":
+            return "openrouter/free"
         return self.model
+
+    def _get_openrouter_url(self) -> str:
+        """Build the OpenRouter chat completions endpoint URL."""
+        base_url = (self.base_url or "https://openrouter.ai/api/v1").rstrip("/")
+        return f"{base_url}/chat/completions"
+
+    async def _get_openrouter_response(self, prompt: str) -> str:
+        """Call OpenRouter directly to avoid LiteLLM alias handling issues."""
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "http://localhost:3005",
+            "X-Title": "CloudPulse AI",
+        }
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                self._get_openrouter_url(),
+                headers=headers,
+                json=payload,
+            )
+            response.raise_for_status()
+
+        data = response.json()
+        try:
+            content = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ValueError("OpenRouter returned an unexpected response payload") from exc
+
+        if not isinstance(content, str):
+            raise ValueError("OpenRouter response content was not text")
+
+        return content.strip()
 
     def generate_cost_summary_prompt(self, data: dict[str, Any], user_query: str) -> str:
         """
@@ -68,7 +108,11 @@ Answer:
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True
     )
-    async def get_chat_response(self, message: str, context_data: dict[str, Any] | None = None) -> str:
+    async def get_chat_response(
+        self,
+        message: str,
+        context_data: dict[str, Any] | None = None,
+    ) -> str:
         """
         Get a response from the LLM.
         """
@@ -77,26 +121,32 @@ Answer:
             
         try:
             prompt = self.generate_cost_summary_prompt(context_data or {}, message)
-            
+
+            if self.provider == "openrouter":
+                return await self._get_openrouter_response(prompt)
+
             # Prepare kwargs for litellm
             kwargs = {
                 "model": self._get_model_name(),
                 "messages": [{"role": "user", "content": prompt}],
                 "api_key": self.api_key,
             }
-            
+
             if self.base_url:
                 kwargs["base_url"] = self.base_url
-                
+
             # litellm handles the underlying API calls for us
             response = completion(**kwargs)
-            
+
             content = response.choices[0].message.content
             return content.strip()
             
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
-            return "I apologize, but I'm having trouble connecting to the AI brain right now. Please check the logs or API configuration."
+            return (
+                "I apologize, but I'm having trouble connecting to the AI brain "
+                "right now. Please check the logs or API configuration."
+            )
 
 
 # Singleton instance

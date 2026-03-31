@@ -3,6 +3,7 @@ CloudPulse AI - Cost Service
 Cloud Accounts management endpoints.
 """
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import select, func
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import get_current_user
 from app.core.database import get_db
 from app.core.events import publish_sync_task
+from app.core.security import encrypt_credentials
 from app.models import CloudAccount, User
 from app.schemas import (
     CloudAccountCreate,
@@ -20,6 +22,17 @@ from app.schemas import (
 )
 
 router = APIRouter()
+
+
+def normalize_account_id(account_id: str) -> str:
+    """Validate account UUIDs before querying PostgreSQL UUID columns."""
+    try:
+        return str(UUID(account_id))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Cloud account {account_id} not found",
+        ) from exc
 
 
 @router.get("/", response_model=PaginatedResponse)
@@ -92,7 +105,7 @@ async def create_cloud_account(
         provider=account_data.provider.value,
         account_id=account_data.account_id,
         account_name=account_data.account_name,
-        credentials=account_data.credentials,
+        credentials=encrypt_credentials(account_data.credentials),
     )
     db.add(account)
     await db.flush()
@@ -108,9 +121,10 @@ async def get_cloud_account(
     db: AsyncSession = Depends(get_db),
 ) -> CloudAccountResponse:
     """Get a specific cloud account by ID."""
+    normalized_account_id = normalize_account_id(account_id)
     result = await db.execute(
         select(CloudAccount).where(
-            CloudAccount.id == account_id,
+            CloudAccount.id == normalized_account_id,
             CloudAccount.organization_id == current_user.organization_id
         )
     )
@@ -133,9 +147,10 @@ async def update_cloud_account(
     db: AsyncSession = Depends(get_db),
 ) -> CloudAccountResponse:
     """Update a cloud account."""
+    normalized_account_id = normalize_account_id(account_id)
     result = await db.execute(
         select(CloudAccount).where(
-            CloudAccount.id == account_id,
+            CloudAccount.id == normalized_account_id,
             CloudAccount.organization_id == current_user.organization_id
         )
     )
@@ -150,6 +165,8 @@ async def update_cloud_account(
     # Update fields
     update_dict = update_data.model_dump(exclude_unset=True)
     for field, value in update_dict.items():
+        if field == "credentials":
+            value = encrypt_credentials(value)
         setattr(account, field, value)
     
     await db.flush()
@@ -165,9 +182,10 @@ async def delete_cloud_account(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Delete a cloud account."""
+    normalized_account_id = normalize_account_id(account_id)
     result = await db.execute(
         select(CloudAccount).where(
-            CloudAccount.id == account_id,
+            CloudAccount.id == normalized_account_id,
             CloudAccount.organization_id == current_user.organization_id
         )
     )
@@ -190,9 +208,10 @@ async def trigger_cost_sync(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Trigger a cost data sync for a cloud account."""
+    normalized_account_id = normalize_account_id(account_id)
     result = await db.execute(
         select(CloudAccount).where(
-            CloudAccount.id == account_id,
+            CloudAccount.id == normalized_account_id,
             CloudAccount.organization_id == current_user.organization_id
         )
     )
@@ -214,6 +233,6 @@ async def trigger_cost_sync(
 
     return {
         "message": "Cost sync initiated",
-        "account_id": account_id,
+        "account_id": normalized_account_id,
         "status": "pending",
     }

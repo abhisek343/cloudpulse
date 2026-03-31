@@ -2,12 +2,13 @@
 CloudPulse AI - Cost Service
 Core configuration and settings management.
 """
-import os
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, PostgresDsn, RedisDsn, field_validator
+from pydantic import Field, PostgresDsn, RedisDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEFAULT_DEV_JWT_SECRET = "cloudpulse-dev-shared-secret-change-in-production"
 
 
 class Settings(BaseSettings):
@@ -28,7 +29,12 @@ class Settings(BaseSettings):
     
     # API
     api_prefix: str = "/api/v1"
-    cors_origins: list[str] = Field(default=["http://localhost:3000"])
+    cors_origins: list[str] = Field(
+        default=["http://localhost:3000", "http://localhost:3005"]
+    )
+    csrf_trusted_origins: list[str] = Field(
+        default=["http://localhost:3000", "http://localhost:3005"]
+    )
     
     # Database
     database_url: PostgresDsn = Field(
@@ -50,11 +56,31 @@ class Settings(BaseSettings):
     aws_region: str = "us-east-1"
     aws_session_token: str | None = None
 
+    # Azure
+    azure_subscription_id: str | None = None
+    azure_tenant_id: str | None = None
+    azure_client_id: str | None = None
+    azure_client_secret: str | None = None
+
+    # GCP
+    gcp_project_id: str | None = None
+    gcp_billing_account_id: str | None = None
+    gcp_service_account_json: str | None = None
+    gcp_service_account_file: str | None = None
+    gcp_billing_export_table: str | None = None
+
+    # Sync / Demo mode
+    cloud_sync_mode: Literal["demo", "live"] = "demo"
+    allow_live_cloud_sync: bool = False
+    default_demo_scenario: Literal["saas", "startup", "enterprise", "incident"] = "saas"
+    default_demo_seed: int = 42
+    default_demo_provider: Literal["aws", "azure", "gcp"] = "aws"
+
     # LLM
-    llm_provider: str = "openai"  # openai, anthropic, gemini, ollama
+    llm_provider: str = "openrouter"  # openrouter, openai, anthropic, gemini, ollama
     llm_api_key: str | None = None
-    llm_model: str = "gpt-3.5-turbo"
-    llm_base_url: str | None = None  # For Ollama / compatible APIs
+    llm_model: str = "openrouter/free"
+    llm_base_url: str | None = "https://openrouter.ai/api/v1"
     
     # Kubernetes / Prometheus
     prometheus_url: str = "http://prometheus-server:9090"
@@ -64,26 +90,63 @@ class Settings(BaseSettings):
     k8s_memory_hourly_rate: float = 0.004  # $ per GB hour
     
     # JWT Authentication
-    jwt_secret_key: str = Field(default=...)  # Required - no default
+    jwt_secret_key: str = Field(default=DEFAULT_DEV_JWT_SECRET)
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 30
     jwt_refresh_token_expire_days: int = 7
+    refresh_cookie_name: str = "cloudpulse_refresh_token"
+    csrf_cookie_name: str = "cloudpulse_csrf_token"
+    auth_cookie_secure: bool = False
+
+    # Account credentials
+    account_credentials_key: str | None = None
     
     @field_validator("jwt_secret_key", mode="before")
     @classmethod
     def validate_jwt_secret(cls, v: str | None) -> str:
-        """Ensure JWT secret is set and not the placeholder value."""
-        if not v or v == "change-me-in-production":
-            if os.getenv("ENVIRONMENT", "development") == "production":
-                raise ValueError("JWT_SECRET_KEY must be set in production")
-            # For development, generate a random key
-            import secrets
-            return secrets.token_urlsafe(32)
+        """Ensure JWT secret is explicit in production and shared in development."""
+        if not v:
+            return DEFAULT_DEV_JWT_SECRET
+
+        if v == DEFAULT_DEV_JWT_SECRET:
+            return v
+
+        if v == "change-me-in-production":
+            raise ValueError("JWT_SECRET_KEY must not use the placeholder value")
+
         return v
+
+    @model_validator(mode="after")
+    def validate_runtime_security(self) -> "Settings":
+        """Require safer runtime defaults outside local development."""
+        if self.environment != "production":
+            return self
+
+        if self.jwt_secret_key == DEFAULT_DEV_JWT_SECRET:
+            raise ValueError("JWT_SECRET_KEY must be set to a unique value in production")
+
+        if len(self.jwt_secret_key) < 32:
+            raise ValueError("JWT_SECRET_KEY must be at least 32 characters in production")
+
+        if self.debug:
+            raise ValueError("DEBUG must be disabled in production")
+
+        return self
     
     # Rate Limiting
     rate_limit_requests: int = 100
     rate_limit_window_seconds: int = 60
+    auth_rate_limit_requests: int = 10
+    auth_rate_limit_window_seconds: int = 300
+    enable_startup_migrations: bool = True
+
+    # Distributed tracing
+    otel_enabled: bool = False
+    otel_service_name: str = "cloudpulse-cost-service"
+    otel_exporter_otlp_endpoint: str | None = None
+    otel_exporter_otlp_insecure: bool = True
+    otel_sampler_ratio: float = Field(default=1.0, ge=0.0, le=1.0)
+    otel_excluded_urls: str = "/health,/metrics"
 
 
 @lru_cache

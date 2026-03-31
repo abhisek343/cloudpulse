@@ -173,3 +173,27 @@ class TestModels:
         assert CloudProvider.AWS.value == "aws"
         assert CloudProvider.GCP.value == "gcp"
         assert CloudProvider.AZURE.value == "azure"
+
+
+class TestSecurityHelpers:
+    """Tests for token and credential security helpers."""
+
+    def test_refresh_token_contains_refresh_type(self):
+        """Refresh tokens should carry a dedicated token type."""
+        from jose import jwt
+
+        from app.core.security import create_refresh_token
+
+        token = create_refresh_token("user-123", csrf_token="csrf-token")
+        payload = jwt.get_unverified_claims(token)
+        assert payload["type"] == "refresh"
+        assert payload["csrf"] == "csrf-token"
+
+    def test_encrypt_credentials_is_passthrough_without_key(self):
+        """Credential encryption should be optional in local development."""
+        from app.core.security import decrypt_credentials, encrypt_credentials
+
+        credentials = {"access_key_id": "abc", "secret_access_key": "xyz"}
+        stored = encrypt_credentials(credentials)
+        assert stored == credentials
+        assert decrypt_credentials(stored) == credentials

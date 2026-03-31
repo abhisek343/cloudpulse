@@ -3,24 +3,32 @@
 import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import { CardBase as Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-const data = [
-  { name: "Jan", total: 1200 },
-  { name: "Feb", total: 1450 },
-  { name: "Mar", total: 1300 },
-  { name: "Apr", total: 1750 },
-  { name: "May", total: 1900 },
-  { name: "Jun", total: 2100 },
-];
+interface OverviewProps {
+  data: Array<{ date: string; amount: number }>;
+}
 
-export function Overview() {
+export function Overview({ data }: OverviewProps) {
+  const chartData = data.slice(-6).map((item) => ({
+    name: new Date(item.date).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    }),
+    total: item.amount,
+  }));
+
   return (
     <Card className="col-span-4 border-gray-800 bg-gray-900/50 text-white">
       <CardHeader>
         <CardTitle>Overview</CardTitle>
       </CardHeader>
       <CardContent className="pl-2">
+        {chartData.length === 0 ? (
+          <div className="flex h-[350px] items-center justify-center text-sm text-gray-400">
+            No recent cost data available.
+          </div>
+        ) : (
         <ResponsiveContainer width="100%" height={350}>
-          <BarChart data={data}>
+          <BarChart data={chartData}>
             <XAxis
               dataKey="name"
               stroke="#888888"
@@ -43,6 +51,7 @@ export function Overview() {
             />
           </BarChart>
         </ResponsiveContainer>
+        )}
       </CardContent>
     </Card>
   );

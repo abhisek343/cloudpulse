@@ -8,8 +8,18 @@ interface K8sTreemapProps {
 
 const COLORS = ["#3b82f6", "#8b5cf6", "#ec4899", "#f97316", "#10b981", "#06b6d4", "#f59e0b", "#6366f1"];
 
-const CustomContent = (props: any) => {
-    const { root, depth, x, y, width, height, index, name, value, colors } = props;
+type TreemapContentProps = {
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
+    index?: number;
+    name?: string;
+    value?: number;
+    colors: string[];
+};
+
+const CustomContent = ({ x = 0, y = 0, width = 0, height = 0, index = 0, name = "", value = 0, colors }: TreemapContentProps) => {
 
     return (
         <g>
@@ -73,7 +83,7 @@ export function K8sTreemap({ data }: K8sTreemapProps) {
                 aspectRatio={4 / 3}
                 stroke="#fff"
                 fill="#8884d8"
-                content={<CustomContent colors={COLORS} />}
+                content={(props) => <CustomContent {...props} colors={COLORS} />}
             >
                 <Tooltip
                     contentStyle={{
@@ -81,9 +91,9 @@ export function K8sTreemap({ data }: K8sTreemapProps) {
                         border: "1px solid #374151",
                         borderRadius: "0.5rem",
                     }}
-                    formatter={(value: any, name: any, props: any) => [
+                    formatter={(value, _name, props) => [
                         `$${Number(value).toFixed(2)}`,
-                        props.payload.name
+                        props.payload?.name ?? "Unknown"
                     ]}
                 />
             </Treemap>

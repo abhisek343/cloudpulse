@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { TrendingUp, Calendar, Target, AlertCircle, Loader2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, ChartCard } from "@/components/ui/card";
@@ -7,25 +8,40 @@ import { CostTrendChart } from "@/components/charts/cost-charts";
 import { formatCurrency } from "@/lib/utils";
 import { getPredictions, getModelStatus, getCostTrend } from "@/lib/api";
 
+type HistoricalPoint = {
+    date: string;
+    amount: number;
+};
+
+type PredictionPoint = {
+    date: string;
+    predicted_cost: number;
+    lower_bound: number;
+    upper_bound: number;
+};
+
 export default function PredictionsPage() {
-    // 1. Fetch Predictions
-    const { data: predictionsResult, isLoading: isPredLoading } = useQuery({
-        queryKey: ["predictions", 7],
-        queryFn: () => getPredictions(7),
-    });
-
-    const predictions = predictionsResult?.data?.predictions || [];
-    const predictionSummary = predictionsResult?.data?.summary;
-
-    // 2. Fetch Historical Data (Last 30 days for context)
+    // 1. Fetch Historical Data (Last 30 days for context)
     const { data: historyResult, isLoading: isHistoryLoading } = useQuery({
         queryKey: ["costTrend", 30],
         queryFn: () => getCostTrend(30),
     });
-    // CostTrend returns plain array, wrapped by safeCall in api.ts? 
-    // Wait, getCostTrend calls safeCall<any>, so result is { success, data, error }
-    // The endpoint returns list[CostTrend].
-    const historicalData = historyResult?.data || [];
+    const historicalData: HistoricalPoint[] = (historyResult?.data || []).map((point: HistoricalPoint) => ({
+        date: point.date,
+        amount: point.amount,
+    }));
+    const historyError = historyResult && !historyResult.success ? historyResult.error : null;
+
+    // 2. Fetch Predictions
+    const { data: predictionsResult, isLoading: isPredLoading } = useQuery({
+        queryKey: ["predictions", 7, historicalData],
+        queryFn: () => getPredictions(7, historicalData),
+        enabled: historicalData.length > 0,
+    });
+
+    const predictions: PredictionPoint[] = predictionsResult?.data?.predictions || [];
+    const predictionSummary = predictionsResult?.data?.summary;
+    const predictionsError = predictionsResult && !predictionsResult.success ? predictionsResult.error : null;
 
     // 3. Fetch Model Status
     const { data: statusResult, isLoading: isStatusLoading } = useQuery({
@@ -33,6 +49,7 @@ export default function PredictionsPage() {
         queryFn: getModelStatus,
     });
     const modelStatus = statusResult?.data;
+    const statusError = statusResult && !statusResult.success ? statusResult.error : null;
 
     const isLoading = isPredLoading || isHistoryLoading || isStatusLoading;
 
@@ -45,10 +62,52 @@ export default function PredictionsPage() {
         );
     }
 
+    const pageError = historyError || predictionsError || statusError;
+    if (pageError) {
+        return (
+            <div className="p-6">
+                <div className="mx-auto max-w-2xl rounded-2xl border border-amber-500/20 bg-slate-900/80 p-8 text-white">
+                    <h2 className="text-2xl font-bold">Predictions are unavailable</h2>
+                    <p className="mt-3 text-slate-400">
+                        Sign in and make sure you have historical cost data before opening the forecasting view.
+                    </p>
+                    <div className="mt-6 flex flex-wrap gap-3">
+                        <Link
+                            href="/login"
+                            className="inline-flex h-10 items-center justify-center rounded-lg bg-blue-600 px-4 text-sm font-medium text-white transition-colors hover:bg-blue-500"
+                        >
+                            Go To Login
+                        </Link>
+                        <Link
+                            href="/accounts"
+                            className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-700 px-4 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-800"
+                        >
+                            Manage Accounts
+                        </Link>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (historicalData.length === 0) {
+        return (
+            <div className="p-6">
+                <div className="mx-auto max-w-2xl rounded-2xl border border-slate-800 bg-slate-900/80 p-8 text-white">
+                    <h2 className="text-2xl font-bold">Not enough data to forecast yet</h2>
+                    <p className="mt-3 text-slate-400">
+                        Predictions need recent cost history. Seed the demo tenant or connect a cloud account to populate this page.
+                    </p>
+                    <pre className="mt-6 overflow-x-auto rounded-lg bg-slate-950/80 p-4 text-xs text-slate-400">{`docker compose exec cost-service python /app/scripts/seed_data.py --reset`}</pre>
+                </div>
+            </div>
+        );
+    }
+
     // Derived stats
     const totalPredicted = predictionSummary?.total_predicted_cost || 0;
     const avgDaily = predictions.length > 0 ? totalPredicted / predictions.length : 0;
-    const confidence = 95; // Hardcoded in backend logic currently
+    const confidence = Math.round((predictionSummary?.confidence_level ?? 0.8) * 100);
 
     // If model is not trained
     if (statusResult?.success && !modelStatus?.predictor_fitted) {
@@ -57,8 +116,8 @@ export default function PredictionsPage() {
                 <AlertCircle className="h-12 w-12 text-yellow-500" />
                 <h2 className="text-xl font-bold text-white">Model Not Ready</h2>
                 <p className="text-gray-400 max-w-md">
-                    The AI models haven't been trained yet. Please verify you have enough historical cost data (30+ days).
-                    Training happens automatically in the background.
+                    The AI models are not ready yet. Seed the demo tenant or provide enough historical
+                    cost data, then call the training endpoint before expecting a forecast.
                 </p>
             </div>
         );
@@ -69,7 +128,7 @@ export default function PredictionsPage() {
             {/* Page Title */}
             <div>
                 <h2 className="text-2xl font-bold text-white">Cost Predictions</h2>
-                <p className="text-gray-400">AI-powered forecasting using Prophet / Neural Prophet</p>
+                <p className="text-gray-400">AI-powered forecasting using Amazon Chronos</p>
             </div>
 
             {/* Stats Cards */}
@@ -104,9 +163,9 @@ export default function PredictionsPage() {
                 {/* We need to format historicalData to match what CostTrendChart expects if needed. 
                     Assuming CostTrendChart expects {date, amount} which match backend types. */}
                 <CostTrendChart
-                    data={historicalData.map((d: any) => ({
+                    data={historicalData.map((d) => ({
                         date: d.date,
-                        amount: d.amount
+                        amount: d.amount,
                     }))}
                     predictions={predictions}
                 />
@@ -136,7 +195,7 @@ export default function PredictionsPage() {
                             </tr>
                         </thead>
                         <tbody>
-                            {predictions.map((pred: any) => (
+                            {predictions.map((pred) => (
                                 <tr key={pred.date} className="border-b border-gray-800">
                                     <td className="py-3 text-white">
                                         {new Date(pred.date).toLocaleDateString("en-US", {
@@ -166,4 +225,3 @@ export default function PredictionsPage() {
         </div>
     );
 }
-

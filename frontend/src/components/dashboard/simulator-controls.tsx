@@ -28,7 +28,7 @@ export function SimulatorControls() {
                     </div>
                     <div>
                         <h3 className="font-semibold text-slate-100">Cost Simulator</h3>
-                        <p className="text-sm text-slate-400">Estimate savings with "What-If" scenarios</p>
+                        <p className="text-sm text-slate-400">Estimate savings with what-if scenarios</p>
                     </div>
                 </div>
                 <div className="flex items-center gap-3">

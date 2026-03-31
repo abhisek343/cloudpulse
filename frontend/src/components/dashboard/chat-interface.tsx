@@ -18,7 +18,7 @@ export function ChatInterface() {
     const [messages, setMessages] = useState<Message[]>([
         {
             role: "assistant",
-            content: "Hello! I'm your FinOps Analyst. Ask me anything about your cloud costs.",
+            content: "Hello! I'm your FinOps Analyst. Ask me about the cost data already stored in CloudPulse.",
         },
     ]);
     const [input, setInput] = useState("");
@@ -37,11 +37,11 @@ export function ChatInterface() {
             const response = await chatAnalyze({ message: userMessage });
 
             const content = response.success
-                ? response.data.response // Use response.data.response because ApiResult wraps the response
-                : "I'm having trouble connecting to the brain. Please check your API key.";
+                ? response.data.response
+                : response.error || "I couldn't analyze your stored cost data right now.";
 
             setMessages((prev) => [...prev, { role: "assistant", content }]);
-        } catch (error) {
+        } catch {
             setMessages((prev) => [
                 ...prev,
                 { role: "assistant", content: "Sorry, something went wrong. Check the console for details." },

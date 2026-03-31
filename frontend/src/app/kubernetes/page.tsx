@@ -7,8 +7,14 @@ import { K8sTreemap } from "@/components/charts/k8s-treemap";
 import { AlertCircle, Server, Layers, DollarSign, Activity } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
+type NamespaceCost = {
+    namespace: string;
+    cpu_cores: number;
+    cost: number;
+};
+
 export default function KubernetesDashboard() {
-    const [data, setData] = useState<any[]>([]);
+    const [data, setData] = useState<NamespaceCost[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -21,7 +27,7 @@ export default function KubernetesDashboard() {
                 } else {
                     setError("Failed to fetch Kubernetes metrics.");
                 }
-            } catch (err) {
+            } catch {
                 setError("Error connecting to backend.");
             } finally {
                 setLoading(false);

@@ -1,6 +1,7 @@
 "use client";
 
-import { DollarSign, TrendingDown, TrendingUp, AlertTriangle, Cloud } from "lucide-react";
+import Link from "next/link";
+import { TrendingDown, TrendingUp, AlertTriangle, Cloud, Loader2 } from "lucide-react";
 import { Card, ChartCard } from "@/components/ui/card";
 import { Overview } from "@/components/dashboard/overview";
 import { RecentActivity } from "@/components/dashboard/recent-activity";
@@ -9,23 +10,56 @@ import { SimulatorControls } from "@/components/dashboard/simulator-controls";
 import { useQuery } from "@tanstack/react-query";
 import { CostTrendChart, ServiceCostChart, CostDistributionChart } from "@/components/charts/cost-charts";
 import { formatCurrency } from "@/lib/utils";
-import { getCostSummary, getPredictions, getCostsByService, getCostsByRegion, getCloudAccounts, getAnomalies } from "@/lib/api";
+import {
+    getAnomalies,
+    getCloudAccounts,
+    getCostSummary,
+    getCostsByRegion,
+    getCostsByService,
+    getPredictions,
+    getRuntimeStatus,
+} from "@/lib/api";
+
+type HistoricalPoint = {
+    date: string;
+    amount: number;
+};
+
+type Anomaly = {
+    date: string;
+    actual_cost: number;
+    expected_cost: number;
+    severity: string;
+    service?: string | null;
+};
+
+type RegionCost = {
+    region: string;
+    total_cost: number;
+};
 
 export function DashboardContent() {
     // 1. Fetch Cost Summary
-    const { data: summaryResult } = useQuery({
+    const { data: summaryResult, isLoading: isSummaryLoading } = useQuery({
         queryKey: ["costSummary", 30],
         queryFn: () => getCostSummary(30),
     });
     const summary = summaryResult?.data;
+    const summaryError = summaryResult && !summaryResult.success ? summaryResult.error : null;
+    const historicalCostData: HistoricalPoint[] = (summary?.by_day ?? []).map((point: HistoricalPoint) => ({
+        date: point.date,
+        amount: point.amount,
+    }));
 
     // 2. Fetch Predictions
     const { data: predictionsResult } = useQuery({
         queryKey: ["predictions", 5],
-        queryFn: () => getPredictions(5),
+        queryFn: () => getPredictions(5, historicalCostData),
+        enabled: historicalCostData.length > 0,
     });
     const predictions = predictionsResult?.data?.predictions || [];
     const predictedTotal = predictionsResult?.data?.summary?.total_predicted_cost || 0;
+    const predictionConfidence = Math.round((predictionsResult?.data?.summary?.confidence_level ?? 0.8) * 100);
 
     // 3. Fetch Service Costs
     const { data: serviceCostsResult } = useQuery({
@@ -52,21 +86,108 @@ export function DashboardContent() {
     const accountsData = accountsResult?.data;
     const activeAccountsCount = accountsData?.total || 0;
 
-    // 6. Fetch Anomalies (using the by_day data as proxy for cost data needed by ML service)
-    // Note: In a real app, we might have a dedicated endpoint for recent anomalies
-    // For now, we'll use a placeholder or check if the ML service has a dedicated endpoint
-    // The previous code used mockAnomalies. Let's assume we fetch them.
-    // Since getAnomalies requires costData, and we just want "recent anomalies",
-    // we might need a new endpoint or just use what we have.
-    // For this refactor, let's skip the complex ML detect call here and assume we want to show
-    // simple stats or use a dedicated "get recent anomalies" endpoint if it existed.
-    // As a workaround, we will rely on what we have or empty list.
-    const anomalies: any[] = [];
+    // 6. Fetch anomalies from the same recent history we use for forecasting
+    const { data: anomaliesResult } = useQuery({
+        queryKey: ["anomalies", historicalCostData],
+        queryFn: () => getAnomalies(historicalCostData),
+        enabled: historicalCostData.length > 0,
+    });
+    const anomalies: Anomaly[] = anomaliesResult?.data?.anomalies || [];
 
-    const percentChange = summary ? ((summary.total_cost - (summary.total_cost * 0.9)) / (summary.total_cost * 0.9)) * 100 : 0; // Simplified previous cost calc
+    const { data: runtimeResult } = useQuery({
+        queryKey: ["runtimeStatus"],
+        queryFn: getRuntimeStatus,
+    });
+    const runtime = runtimeResult?.data;
 
-    if (!summary) {
-        return <div className="p-6 text-white">Loading dashboard data...</div>;
+    const latestAmount = historicalCostData.at(-1)?.amount ?? 0;
+    const previousAmount = historicalCostData.at(-2)?.amount ?? 0;
+    const percentChange = previousAmount > 0
+        ? ((latestAmount - previousAmount) / previousAmount) * 100
+        : 0;
+
+    if (isSummaryLoading) {
+        return (
+            <div className="flex h-[55vh] items-center justify-center">
+                <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+                <span className="ml-3 text-sm text-slate-400">Loading dashboard data...</span>
+            </div>
+        );
+    }
+
+    if (summaryError) {
+        return (
+            <div className="p-6">
+                <div className="mx-auto max-w-3xl rounded-2xl border border-amber-500/20 bg-slate-900/80 p-8 text-white shadow-xl">
+                    <p className="text-sm font-medium uppercase tracking-[0.2em] text-amber-400">Dashboard unavailable</p>
+                    <h2 className="mt-3 text-3xl font-bold">Sign in or seed demo data first</h2>
+                    <p className="mt-3 max-w-2xl text-slate-400">
+                        CloudPulse needs an authenticated user and some cost history before the dashboard can render.
+                        If you want a fast local demo, seed the built-in dataset and log in with the demo account.
+                    </p>
+
+                    <div className="mt-6 flex flex-wrap gap-3">
+                        <Link
+                            href="/login"
+                            className="inline-flex h-10 items-center justify-center rounded-lg bg-blue-600 px-4 text-sm font-medium text-white transition-colors hover:bg-blue-500"
+                        >
+                            Go To Login
+                        </Link>
+                        <Link
+                            href="/register"
+                            className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-700 px-4 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-800"
+                        >
+                            Create Account
+                        </Link>
+                    </div>
+
+                    <div className="mt-6 rounded-xl border border-slate-800 bg-slate-950/80 p-4">
+                        <p className="text-sm font-medium text-slate-200">Local demo flow</p>
+                        <pre className="mt-3 overflow-x-auto text-xs text-slate-400">{`cp .env.example .env
+docker compose up --build -d
+docker compose exec cost-service python /app/scripts/seed_data.py --reset`}</pre>
+                        <p className="mt-3 text-xs text-slate-500">
+                            Demo login: <span className="font-mono text-slate-300">demo@cloudpulse.local</span> /{" "}
+                            <span className="font-mono text-slate-300">DemoPass123!</span>
+                        </p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (!summary || historicalCostData.length === 0) {
+        return (
+            <div className="p-6">
+                <div className="mx-auto max-w-3xl rounded-2xl border border-slate-800 bg-slate-900/80 p-8 text-white shadow-xl">
+                    <p className="text-sm font-medium uppercase tracking-[0.2em] text-blue-400">No cost history yet</p>
+                    <h2 className="mt-3 text-3xl font-bold">Connect an account or load the demo tenant</h2>
+                    <p className="mt-3 max-w-2xl text-slate-400">
+                        The dashboard is working, but there is no historical cost data to graph or forecast yet.
+                        Add a cloud account, or seed the demo dataset if you want a fast walkthrough.
+                    </p>
+
+                    <div className="mt-6 flex flex-wrap gap-3">
+                        <Link
+                            href="/accounts"
+                            className="inline-flex h-10 items-center justify-center rounded-lg bg-blue-600 px-4 text-sm font-medium text-white transition-colors hover:bg-blue-500"
+                        >
+                            Open Accounts
+                        </Link>
+                        <Link
+                            href="/predictions"
+                            className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-700 px-4 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-800"
+                        >
+                            Open Predictions
+                        </Link>
+                    </div>
+
+                    <div className="mt-6 rounded-xl border border-slate-800 bg-slate-950/80 p-4">
+                        <pre className="overflow-x-auto text-xs text-slate-400">{`docker compose exec cost-service python /app/scripts/seed_data.py --reset`}</pre>
+                    </div>
+                </div>
+            </div>
+        );
     }
 
     return (
@@ -76,6 +197,39 @@ export function DashboardContent() {
                 <h2 className="text-2xl font-bold text-white">Dashboard Overview</h2>
                 <p className="text-gray-400">Monitor your cloud costs and predictions</p>
             </div>
+
+            {runtime && (
+                <div
+                    className={`rounded-2xl border px-5 py-4 ${
+                        runtime.cloud_sync_mode === "live"
+                            ? "border-emerald-500/20 bg-emerald-500/5"
+                            : "border-blue-500/20 bg-blue-500/5"
+                    }`}
+                >
+                    <div className="flex flex-wrap items-center gap-3">
+                        <span
+                            className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${
+                                runtime.cloud_sync_mode === "live"
+                                    ? "bg-emerald-500/15 text-emerald-300"
+                                    : "bg-blue-500/15 text-blue-300"
+                            }`}
+                        >
+                            {runtime.cloud_sync_mode === "live" ? "Live Provider Mode" : "Safe Demo Mode"}
+                        </span>
+                        <span className="text-sm text-slate-300">
+                            default demo: {runtime.default_demo_provider}/{runtime.default_demo_scenario}
+                        </span>
+                        <span className="text-sm text-slate-400">
+                            LLM: {runtime.llm_provider} {runtime.llm_configured ? "configured" : "not configured"}
+                        </span>
+                    </div>
+                    <p className="mt-3 text-sm text-slate-400">
+                        {runtime.cloud_sync_mode === "live"
+                            ? "CloudPulse is set to call real provider adapters where supported."
+                            : "CloudPulse is currently running in reproducible demo mode so the OSS stack works out of the box."}
+                    </p>
+                </div>
+            )}
 
             {/* Stats Cards */}
             <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
@@ -98,13 +252,13 @@ export function DashboardContent() {
                 <Card
                     title="Predicted (Next 5 Days)"
                     value={formatCurrency(predictedTotal)}
-                    subtitle="95% confidence"
+                    subtitle={`${predictionConfidence}% confidence`}
                     icon={<TrendingUp className="h-5 w-5" />}
                 />
                 <Card
                     title="Anomalies Detected"
                     value={anomalies.length.toString()}
-                    subtitle={`${anomalies.filter(a => a.severity === 'high').length} high severity`}
+                    subtitle={`${anomalies.filter((anomaly) => anomaly.severity === "high").length} high severity`}
                     icon={<AlertTriangle className="h-5 w-5" />}
                     className="border-orange-500/30"
                 />
@@ -123,19 +277,19 @@ export function DashboardContent() {
 
             {/* Main Content Areas */}
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-                <Overview />
+                <Overview data={historicalCostData} />
                 <RecentActivity />
             </div>
 
             {/* Charts Row 1 */}
             <div className="grid gap-6 lg:grid-cols-3">
                 <ChartCard title="Cost Trend & Forecast" className="lg:col-span-2">
-                    <CostTrendChart data={summary.by_day} />
+                    <CostTrendChart data={historicalCostData} predictions={predictions} />
                 </ChartCard>
                 <ChartCard title="Cost by Region">
                     <CostDistributionChart data={regionCosts} />
                     <div className="mt-4 space-y-2">
-                        {regionCosts.map((region: any, index: number) => (
+                        {(regionCosts as RegionCost[]).map((region, index) => (
                             <div key={region.region} className="flex items-center justify-between text-sm">
                                 <div className="flex items-center gap-2">
                                     <div
@@ -160,8 +314,27 @@ export function DashboardContent() {
                 </ChartCard>
                 <ChartCard title="Recent Anomalies">
                     <div className="space-y-3">
-                        {/* Placeholder for anomalies until we have a proper endpoint */}
-                        <p className="text-gray-400 text-sm">No recent anomalies detected.</p>
+                        {anomalies.length === 0 ? (
+                            <p className="text-gray-400 text-sm">No recent anomalies detected.</p>
+                        ) : (
+                            anomalies.slice(0, 4).map((anomaly) => (
+                                <div
+                                    key={`${anomaly.date}-${anomaly.service}`}
+                                    className="rounded-lg border border-gray-800 bg-gray-900/40 p-3"
+                                >
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-sm font-medium text-white">{anomaly.service || "Unknown"}</span>
+                                        <span className="text-xs uppercase tracking-wide text-orange-400">
+                                            {anomaly.severity}
+                                        </span>
+                                    </div>
+                                    <p className="mt-1 text-sm text-gray-400">
+                                        {anomaly.date.slice(0, 10)}: expected {formatCurrency(anomaly.expected_cost)}, actual{" "}
+                                        {formatCurrency(anomaly.actual_cost)}
+                                    </p>
+                                </div>
+                            ))
+                        )}
                     </div>
                 </ChartCard>
             </div>

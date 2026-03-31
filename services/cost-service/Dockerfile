@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir -e .
 
 # Copy application code
 COPY app/ ./app/
+COPY scripts/ ./scripts/
 
 # Create non-root user
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
@@ -22,4 +23,4 @@ USER appuser
 EXPOSE 8000
 
 # Run with uvicorn
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

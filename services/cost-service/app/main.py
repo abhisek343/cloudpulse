@@ -8,11 +8,12 @@ from typing import AsyncGenerator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import chat, kubernetes
 from app.api.router import api_router
 from app.core.cache import cache
 from app.core.config import get_settings
-from app.core.database import close_db, init_db
+from app.core.database import close_db, engine, init_db
+from app.core.observability import ObservabilityMiddleware, metrics_response
+from app.core.tracing import setup_tracing
 
 settings = get_settings()
 
@@ -23,8 +24,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup
     await init_db()
     await cache.connect()
+    flush_traces = setup_tracing(
+        app,
+        engine=engine,
+        instrument_redis=True,
+    )
     yield
     # Shutdown
+    flush_traces()
     await cache.disconnect()
     await close_db()
 
@@ -39,6 +46,8 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     
+    app.add_middleware(ObservabilityMiddleware)
+
     # CORS middleware
     if settings.cors_origins:
         app.add_middleware(
@@ -46,13 +55,11 @@ def create_app() -> FastAPI:
             allow_origins=settings.cors_origins,
             allow_credentials=True,
             allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-            allow_headers=["Authorization", "Content-Type"],
+            allow_headers=["Authorization", "Content-Type", "X-CSRF-Token"],
         )
     
     # Include API Routers
     app.include_router(api_router, prefix=settings.api_prefix)
-    app.include_router(chat.router, prefix=f"{settings.api_prefix}/chat", tags=["AI Analyst"])
-    app.include_router(kubernetes.router, prefix=f"{settings.api_prefix}/k8s", tags=["Kubernetes"])
     
     return app
 
@@ -68,3 +75,9 @@ async def health_check() -> dict:
         "version": settings.app_version,
         "service": "cost-service",
     }
+
+
+@app.get("/metrics")
+async def metrics() -> object:
+    """Prometheus scrape endpoint."""
+    return metrics_response()

@@ -9,11 +9,16 @@ import signal
 from typing import Any
 
 from aio_pika import connect_robust, IncomingMessage
-from sqlalchemy.orm import sessionmaker
 
-from app.core.config import get_settings
-from app.core.database import async_session_factory, init_db
 from app.core.cache import cache
+from app.core.config import get_settings
+from app.core.database import async_session_factory, engine, init_db
+from app.core.tracing import (
+    extract_trace_context,
+    get_span_kind,
+    get_tracer,
+    setup_tracing,
+)
 from app.models import CloudAccount
 from app.services.cost_sync import CostSyncService
 
@@ -24,6 +29,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("worker")
 settings = get_settings()
+tracer = get_tracer(__name__)
 
 
 class Worker:
@@ -32,10 +38,11 @@ class Worker:
         self.channel = None
         self.queue = None
         self.should_exit = False
+        self.flush_traces = lambda: None
 
     async def connect(self):
         """Connect to RabbitMQ."""
-        logger.info(f"Connecting to RabbitMQ at {settings.rabbitmq_url}")
+        logger.info("Connecting to RabbitMQ at %s", settings.rabbitmq_url)
         self.connection = await connect_robust(settings.rabbitmq_url)
         self.channel = await self.connection.channel()
         
@@ -49,23 +56,36 @@ class Worker:
 
     async def process_message(self, message: IncomingMessage):
         """Process incoming sync task."""
-        async with message.process():
-            try:
-                body = message.body.decode()
-                data = json.loads(body)
-                logger.info(f"Received task: {data}")
+        trace_context = extract_trace_context(message.headers)
+        with tracer.start_as_current_span(
+            "rabbitmq.process_sync_task",
+            context=trace_context,
+            kind=get_span_kind("consumer"),
+        ) as span:
+            span.set_attribute("messaging.system", "rabbitmq")
+            span.set_attribute("messaging.destination.name", "cost_sync_tasks")
+            span.set_attribute("messaging.operation", "process")
+            span.set_attribute("messaging.message.payload_size_bytes", len(message.body))
 
-                task_type = data.get("type")
-                
-                if task_type == "sync_account":
-                    await self.handle_sync_account(data)
-                elif task_type == "sync_all":
-                    await self.handle_sync_all(data)
-                else:
-                    logger.warning(f"Unknown task type: {task_type}")
+            async with message.process():
+                try:
+                    body = message.body.decode()
+                    data = json.loads(body)
+                    task_type = data.get("type", "unknown")
 
-            except Exception as e:
-                logger.error(f"Error processing message: {e}", exc_info=True)
+                    span.set_attribute("cloudpulse.task.type", task_type)
+                    logger.info("Received task: %s", data)
+
+                    if task_type == "sync_account":
+                        await self.handle_sync_account(data)
+                    elif task_type == "sync_all":
+                        await self.handle_sync_all(data)
+                    else:
+                        logger.warning("Unknown task type: %s", task_type)
+
+                except Exception as e:
+                    span.record_exception(e)
+                    logger.error("Error processing message: %s", e, exc_info=True)
 
     async def handle_sync_account(self, data: dict[str, Any]):
         """Handle single account sync."""
@@ -81,12 +101,16 @@ class Worker:
             account = result.scalar_one_or_none()
             
             if not account:
-                logger.error(f"Account {account_id} not found")
+                logger.error("Account %s not found", account_id)
                 return
 
-            logger.info(f"Starting sync for account {account.account_name} ({account.provider})")
+            logger.info(
+                "Starting sync for account %s (%s)",
+                account.account_name,
+                account.provider,
+            )
             result = await cost_service.sync_account_costs(account, days=days)
-            logger.info(f"Sync completed: {result}")
+            logger.info("Sync completed: %s", result)
 
     async def handle_sync_all(self, data: dict[str, Any]):
         """Handle sync for all accounts in organization."""
@@ -95,14 +119,19 @@ class Worker:
         
         async with async_session_factory() as db:
             cost_service = CostSyncService(db, cache)
-            logger.info(f"Starting sync for organization {org_id}")
+            logger.info("Starting sync for organization %s", org_id)
             results = await cost_service.sync_all_accounts(org_id, days=days)
-            logger.info(f"Organization sync completed. Processed {len(results)} accounts.")
+            logger.info("Organization sync completed. Processed %s accounts.", len(results))
 
     async def run(self):
         """Run the worker loop."""
         await init_db()
         await cache.connect()
+        self.flush_traces = setup_tracing(
+            engine=engine,
+            instrument_redis=True,
+            service_name="cloudpulse-cost-worker",
+        )
         await self.connect()
         
         logger.info("Worker started. Waiting for messages...")
@@ -119,6 +148,7 @@ class Worker:
         logger.info("Shutting down worker...")
         if self.connection:
             await self.connection.close()
+        self.flush_traces()
         await cache.disconnect()
 
 

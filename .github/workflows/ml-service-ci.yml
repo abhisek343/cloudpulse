@@ -1,0 +1,63 @@
+name: ML Service CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/ml-service/**"
+      - ".github/workflows/ml-service-ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "services/ml-service/**"
+      - ".github/workflows/ml-service-ci.yml"
+
+defaults:
+  run:
+    working-directory: services/ml-service
+
+jobs:
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run Ruff
+        env:
+          PYTHONPATH: ${{ github.workspace }}/services/ml-service
+        run: ruff check app tests --select E,F --ignore E501
+
+      - name: Run tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}/services/ml-service
+        run: pytest --cov=app --cov-report=xml --cov-report=term-missing
+
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/ml-service
+          push: false
+          tags: cloudpulse-ai/ml-service:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

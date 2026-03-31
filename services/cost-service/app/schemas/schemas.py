@@ -2,35 +2,37 @@
 CloudPulse AI - Cost Service
 Pydantic schemas for API request/response validation.
 """
+
 from datetime import datetime
 from decimal import Decimal
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-
 # === Enums ===
 
-class CloudProvider(str, Enum):
+
+class CloudProvider(StrEnum):
+    DEMO = "demo"
     AWS = "aws"
     GCP = "gcp"
     AZURE = "azure"
 
 
-class CostGranularity(str, Enum):
+class CostGranularity(StrEnum):
     HOURLY = "hourly"
     DAILY = "daily"
     MONTHLY = "monthly"
 
 
-class AnomalySeverity(str, Enum):
+class AnomalySeverity(StrEnum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
     CRITICAL = "critical"
 
 
-class AnomalyStatus(str, Enum):
+class AnomalyStatus(StrEnum):
     OPEN = "open"
     ACKNOWLEDGED = "acknowledged"
     RESOLVED = "resolved"
@@ -39,18 +41,22 @@ class AnomalyStatus(str, Enum):
 
 # === Base Schemas ===
 
+
 class BaseSchema(BaseModel):
     """Base schema with common config."""
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class TimestampMixin(BaseModel):
     """Mixin for timestamp fields."""
+
     created_at: datetime
     updated_at: datetime | None = None
 
 
 # === Organization Schemas ===
+
 
 class OrganizationCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
@@ -70,6 +76,7 @@ class OrganizationResponse(BaseSchema, TimestampMixin):
 
 
 # === User Schemas ===
+
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -96,6 +103,7 @@ class UserResponse(BaseSchema, TimestampMixin):
 
 # === Cloud Account Schemas ===
 
+
 class CloudAccountCreate(BaseModel):
     provider: CloudProvider
     account_id: str = Field(..., min_length=1, max_length=100)
@@ -121,6 +129,7 @@ class CloudAccountResponse(BaseSchema):
 
 
 # === Cost Record Schemas ===
+
 
 class CostRecordCreate(BaseModel):
     date: datetime
@@ -150,6 +159,7 @@ class CostRecordResponse(BaseSchema):
 
 class CostSummary(BaseModel):
     """Aggregated cost summary."""
+
     total_cost: Decimal
     currency: str = "USD"
     period_start: datetime
@@ -161,6 +171,7 @@ class CostSummary(BaseModel):
 
 class CostTrend(BaseModel):
     """Cost trend data for visualization."""
+
     date: datetime
     amount: Decimal
     change_percent: Decimal | None = None
@@ -168,6 +179,7 @@ class CostTrend(BaseModel):
 
 
 # === Budget Schemas ===
+
 
 class BudgetCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
@@ -203,6 +215,7 @@ class BudgetResponse(BaseSchema, TimestampMixin):
 
 class BudgetStatus(BaseModel):
     """Current budget status with usage."""
+
     budget: BudgetResponse
     current_spend: Decimal
     usage_percent: Decimal
@@ -212,6 +225,7 @@ class BudgetStatus(BaseModel):
 
 
 # === Anomaly Schemas ===
+
 
 class CostAnomalyResponse(BaseSchema):
     id: str
@@ -238,8 +252,10 @@ class AnomalyUpdateStatus(BaseModel):
 
 # === API Response Wrappers ===
 
+
 class PaginatedResponse(BaseModel):
     """Generic paginated response."""
+
     items: list
     total: int
     page: int
@@ -249,8 +265,50 @@ class PaginatedResponse(BaseModel):
 
 class HealthCheck(BaseModel):
     """Health check response."""
+
     status: str = "healthy"
     version: str
     database: str = "connected"
     redis: str = "connected"
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+class RuntimeProviderStatus(BaseModel):
+    """Provider readiness snapshot for the runtime status endpoint."""
+
+    configured: bool
+    readiness: str
+    note: str
+
+
+class RuntimeStatus(BaseModel):
+    """Current runtime mode and provider readiness details."""
+
+    environment: str
+    cloud_sync_mode: str
+    allow_live_cloud_sync: bool
+    default_demo_provider: str
+    default_demo_scenario: str
+    llm_provider: str
+    llm_configured: bool
+    providers: dict[str, RuntimeProviderStatus]
+
+
+class ProviderPreflightCheck(BaseModel):
+    """Individual check in the provider preflight response."""
+
+    name: str
+    status: str
+    detail: str
+
+
+class ProviderPreflightResult(BaseModel):
+    """Live-provider preflight summary for OSS operators."""
+
+    provider: str
+    configured: bool
+    ready: bool
+    credential_source: str
+    cost_source: str
+    missing_env: list[str] = Field(default_factory=list)
+    checks: list[ProviderPreflightCheck] = Field(default_factory=list)

@@ -4,10 +4,10 @@ Cost data endpoints - querying and aggregations.
 """
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select, func
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user
@@ -22,6 +22,33 @@ from app.schemas import (
 )
 
 router = APIRouter()
+
+
+def _build_cost_filters(
+    organization_id: str,
+    start_date: datetime,
+    end_date: datetime,
+    account_id: str | None = None,
+    service: str | None = None,
+    region: str | None = None,
+) -> list[object]:
+    """Build the shared filter list used across cost aggregation queries."""
+    filters: list[object] = [
+        CloudAccount.organization_id == organization_id,
+        CostRecord.date >= start_date,
+        CostRecord.date <= end_date,
+    ]
+
+    if account_id:
+        filters.append(CostRecord.cloud_account_id == account_id)
+
+    if service:
+        filters.append(CostRecord.service == service)
+
+    if region:
+        filters.append(CostRecord.region == region)
+
+    return filters
 
 
 @router.get("/summary", response_model=CostSummary)
@@ -52,66 +79,95 @@ async def get_cost_summary(
     
     # Calculate date range
     end_date = datetime.now(timezone.utc)
-    start_date = end_date - timedelta(days=days)
-    
-    # Build base query with organization isolation via join
-    query = select(CostRecord).join(CloudAccount).where(
-        CloudAccount.organization_id == current_user.organization_id,
-        CostRecord.date >= start_date,
-        CostRecord.date <= end_date,
+    start_date = end_date - timedelta(days=days - 1)
+    filters = _build_cost_filters(
+        current_user.organization_id,
+        start_date,
+        end_date,
+        account_id=account_id,
+        service=service,
+        region=region,
     )
-    
-    if account_id:
-        query = query.where(CostRecord.cloud_account_id == account_id)
-    
-    if service:
-        query = query.where(CostRecord.service == service)
-    
-    if region:
-        query = query.where(CostRecord.region == region)
-    
-    result = await db.execute(query)
-    records = result.scalars().all()
-    
-    # Aggregate data
-    total_cost = Decimal("0")
-    by_service: dict[str, Decimal] = {}
-    by_region: dict[str, Decimal] = {}
-    by_day: dict[str, Decimal] = {}
-    
-    for record in records:
-        total_cost += record.amount
-        
-        # By service
-        if record.service not in by_service:
-            by_service[record.service] = Decimal("0")
-        by_service[record.service] += record.amount
-        
-        # By region
-        if record.region:
-            if record.region not in by_region:
-                by_region[record.region] = Decimal("0")
-            by_region[record.region] += record.amount
-        
-        # By day
-        day_key = record.date.strftime("%Y-%m-%d")
-        if day_key not in by_day:
-            by_day[day_key] = Decimal("0")
-        by_day[day_key] += record.amount
-    
-    # Sort by_day
-    sorted_days = [
-        {"date": k, "amount": float(v)}
-        for k, v in sorted(by_day.items())
-    ]
-    
+
+    day_bucket = func.date_trunc("day", CostRecord.date)
+    total_cost = await db.scalar(
+        select(func.coalesce(func.sum(CostRecord.amount), 0))
+        .join(CloudAccount)
+        .where(*filters)
+    )
+
+    service_rows = (
+        await db.execute(
+            select(
+                CostRecord.service,
+                func.sum(CostRecord.amount).label("total"),
+            )
+            .join(CloudAccount)
+            .where(*filters)
+            .group_by(CostRecord.service)
+            .order_by(func.sum(CostRecord.amount).desc())
+        )
+    ).all()
+
+    region_rows = (
+        await db.execute(
+            select(
+                CostRecord.region,
+                func.sum(CostRecord.amount).label("total"),
+            )
+            .join(CloudAccount)
+            .where(*filters, CostRecord.region.isnot(None))
+            .group_by(CostRecord.region)
+            .order_by(func.sum(CostRecord.amount).desc())
+        )
+    ).all()
+
+    day_rows = (
+        await db.execute(
+            select(
+                day_bucket.label("day"),
+                func.sum(CostRecord.amount).label("total"),
+            )
+            .join(CloudAccount)
+            .where(*filters)
+            .group_by(day_bucket)
+            .order_by(day_bucket)
+        )
+    ).all()
+
+    by_service = {
+        row.service: Decimal(str(row.total))
+        for row in service_rows
+        if row.service and row.total is not None
+    }
+    by_region = {
+        row.region: Decimal(str(row.total))
+        for row in region_rows
+        if row.region and row.total is not None
+    }
+
+    by_day_lookup = {
+        row.day.date(): Decimal(str(row.total))
+        for row in day_rows
+        if row.day is not None and row.total is not None
+    }
+    sorted_days = []
+    for day_offset in range(days):
+        current_day = (start_date + timedelta(days=day_offset)).date()
+        sorted_days.append(
+            {
+                "date": current_day.isoformat(),
+                "amount": float(by_day_lookup.get(current_day, Decimal("0"))),
+            }
+        )
+
     summary = CostSummary(
-        total_cost=total_cost,
+        total_cost=Decimal(str(total_cost or 0)),
         currency="USD",
         period_start=start_date,
         period_end=end_date,
-        by_service={k: v for k, v in sorted(by_service.items(), key=lambda x: x[1], reverse=True)},
-        by_region={k: v for k, v in sorted(by_region.items(), key=lambda x: x[1], reverse=True)},
+        by_service=by_service,
+        by_region=by_region,
         by_day=sorted_days,
     )
     
@@ -128,7 +184,7 @@ async def get_cost_trend(
     cache: RedisCache = Depends(get_cache),
     account_id: str | None = None,
     days: Annotated[int, Query(ge=7, le=365)] = 30,
-    granularity: str = "daily",
+    granularity: Literal["daily"] = "daily",
 ) -> list[CostTrend]:
     """Get cost trend data for visualization."""
     cache_key = cache.generate_key(
@@ -144,38 +200,47 @@ async def get_cost_trend(
         return [CostTrend(**item) for item in cached]
     
     end_date = datetime.now(timezone.utc)
-    start_date = end_date - timedelta(days=days)
+    start_date = end_date - timedelta(days=days - 1)
+    filters = _build_cost_filters(
+        current_user.organization_id,
+        start_date,
+        end_date,
+        account_id=account_id,
+    )
     
-    # Query daily costs with organization isolation
-    query = select(
-        func.date_trunc("day", CostRecord.date).label("day"),
-        func.sum(CostRecord.amount).label("total"),
-    ).join(CloudAccount).where(
-        CloudAccount.organization_id == current_user.organization_id,
-        CostRecord.date >= start_date,
-        CostRecord.date <= end_date,
-    ).group_by(
-        func.date_trunc("day", CostRecord.date)
-    ).order_by("day")
-    
-    if account_id:
-        query = query.where(CostRecord.cloud_account_id == account_id)
-    
-    result = await db.execute(query)
-    rows = result.all()
+    bucket = func.date_trunc("day", CostRecord.date)
+
+    rows = (
+        await db.execute(
+            select(
+                bucket.label("day"),
+                func.sum(CostRecord.amount).label("total"),
+            )
+            .join(CloudAccount)
+            .where(*filters)
+            .group_by(bucket)
+            .order_by(bucket)
+        )
+    ).all()
+    amounts_by_day = {
+        row.day.date(): Decimal(str(row.total))
+        for row in rows
+        if row.day is not None and row.total is not None
+    }
     
     trends: list[CostTrend] = []
     prev_amount: Decimal | None = None
     
-    for row in rows:
-        amount = Decimal(str(row.total)) if row.total else Decimal("0")
+    for day_offset in range(days):
+        current_day = (start_date + timedelta(days=day_offset)).date()
+        amount = amounts_by_day.get(current_day, Decimal("0"))
         change_percent = None
         
         if prev_amount is not None and prev_amount > 0:
             change_percent = ((amount - prev_amount) / prev_amount) * 100
         
         trends.append(CostTrend(
-            date=row.day,
+            date=datetime.combine(current_day, datetime.min.time(), tzinfo=timezone.utc),
             amount=amount,
             change_percent=change_percent,
             predicted=False,
@@ -198,7 +263,7 @@ async def get_costs_by_service(
 ) -> list[dict]:
     """Get top services by cost."""
     end_date = datetime.now(timezone.utc)
-    start_date = end_date - timedelta(days=days)
+    start_date = end_date - timedelta(days=days - 1)
     
     # Build base query with organization isolation
     query = select(
@@ -244,7 +309,7 @@ async def get_costs_by_region(
 ) -> list[dict]:
     """Get costs grouped by region."""
     end_date = datetime.now(timezone.utc)
-    start_date = end_date - timedelta(days=days)
+    start_date = end_date - timedelta(days=days - 1)
     
     # Build base query with organization isolation
     query = select(

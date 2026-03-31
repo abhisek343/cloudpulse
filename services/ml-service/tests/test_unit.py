@@ -3,10 +3,11 @@ CloudPulse AI - ML Service
 Unit tests for ML models and services.
 """
 import pytest
-from datetime import datetime, timedelta
+import numpy as np
+from datetime import datetime
 from decimal import Decimal
 
-from app.core.config import Settings, get_settings
+from app.core.config import get_settings
 
 
 class TestMLSettings:
@@ -43,9 +44,8 @@ class TestCostPredictor:
         assert "chronos" in predictor.model_name.lower()
     
     def test_prepare_data_with_date_column(self):
-        """Test data preparation returns tensor for Chronos."""
+        """Test data preparation returns a numeric context array."""
         from app.services.cost_predictor import CostPredictor
-        import torch
         
         predictor = CostPredictor()
         test_data = [
@@ -56,8 +56,8 @@ class TestCostPredictor:
         
         tensor = predictor.prepare_data(test_data)
         
-        assert isinstance(tensor, torch.Tensor)
-        assert tensor.dtype == torch.float32
+        assert hasattr(tensor, "__len__")
+        assert hasattr(tensor, "dtype")
         assert len(tensor) >= 3
     
     def test_prepare_data_fills_missing_dates(self):
@@ -101,15 +101,84 @@ class TestCostPredictor:
         assert result["success"] is False
         assert "Insufficient" in result.get("error", "")
     
-    def test_predict_without_context(self):
+    @pytest.mark.asyncio
+    async def test_predict_without_context(self):
         """Test prediction requires cost_data context for Chronos."""
         from app.services.cost_predictor import CostPredictor
         
         predictor = CostPredictor()
-        result = predictor.predict(days=7)  # No cost_data provided
+        result = await predictor.predict(days=7)  # No cost_data provided
         
         assert result["success"] is False
         assert "context" in result.get("error", "").lower()
+
+    @pytest.mark.asyncio
+    async def test_predict_supports_installed_pipeline_signature(self, monkeypatch: pytest.MonkeyPatch):
+        """Prediction should support Chronos versions that use `inputs=`."""
+        from app.services.cost_predictor import CostPredictor
+        import app.services.cost_predictor as predictor_module
+
+        class FakeTensor:
+            def __init__(self, values):
+                self.values = np.array(values, dtype=np.float32)
+
+            def numpy(self):
+                return self.values
+
+            def __getitem__(self, index):
+                return FakeTensor(self.values[index])
+
+        class FakeTorch:
+            class cuda:
+                @staticmethod
+                def is_available():
+                    return False
+
+            float32 = "float32"
+
+            @staticmethod
+            def tensor(values, dtype=None):
+                del dtype
+                return FakeTensor(values)
+
+            @staticmethod
+            def median(tensor, dim=0):
+                class Result:
+                    values = FakeTensor(np.median(tensor.values, axis=dim))
+
+                return Result()
+
+            @staticmethod
+            def quantile(tensor, q, dim=0):
+                return FakeTensor(np.quantile(tensor.values, q, axis=dim))
+
+        class FakePipeline:
+            def predict(self, inputs=None, prediction_length=None, num_samples=None, **kwargs):
+                assert kwargs == {}
+                assert inputs is not None
+                assert prediction_length == 3
+                assert num_samples == 20
+                return FakeTensor(
+                    [[[101.0, 102.0, 103.0], [111.0, 112.0, 113.0], [121.0, 122.0, 123.0]]]
+                )
+
+        monkeypatch.setattr(predictor_module, "_get_torch", lambda: FakeTorch())
+
+        predictor = CostPredictor()
+        predictor.pipeline = FakePipeline()
+
+        result = await predictor.predict(
+            days=3,
+            cost_data=[
+                {"date": "2026-01-01", "amount": 100.0},
+                {"date": "2026-01-02", "amount": 120.0},
+                {"date": "2026-01-03", "amount": 140.0},
+            ],
+        )
+
+        assert result["success"] is True
+        assert len(result["predictions"]) == 3
+        assert result["predictions"][0]["predicted_cost"] == 111.0
     
     def test_get_predictor_singleton(self):
         """Test get_predictor returns same instance."""
@@ -246,9 +315,11 @@ class TestMLSchemas:
     
     def test_predict_request_defaults(self):
         """Test PredictRequest default values."""
-        from app.models.schemas import PredictRequest
+        from app.models.schemas import CostDataPoint, PredictRequest
         
-        request = PredictRequest()
+        request = PredictRequest(
+            cost_data=[CostDataPoint(date=datetime.now(), amount=Decimal("100"))]
+        )
         assert request.days == 30
         assert request.include_history is False
     

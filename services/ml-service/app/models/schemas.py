@@ -29,6 +29,7 @@ class PredictRequest(BaseModel):
     """Request for cost prediction."""
     days: int = Field(default=30, ge=1, le=365)
     include_history: bool = False
+    cost_data: list[CostDataPoint] = Field(..., min_length=1)
 
 
 class DetectAnomaliesRequest(BaseModel):

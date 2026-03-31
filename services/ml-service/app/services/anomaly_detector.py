@@ -3,7 +3,8 @@ CloudPulse AI - ML Service
 Anomaly detection using Isolation Forest.
 """
 import logging
-from datetime import datetime
+import pickle
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -40,6 +41,46 @@ class AnomalyDetector:
         self.is_fitted: bool = False
         self.feature_names: list[str] = []
         self.baseline_stats: dict[str, float] = {}
+        self._state_path = Path(settings.model_path) / "anomaly_detector.pkl"
+        self._load_state()
+
+    def _load_state(self) -> None:
+        """Load persisted anomaly-detector state when available."""
+        if not self._state_path.exists():
+            return
+
+        try:
+            with self._state_path.open("rb") as handle:
+                payload = pickle.load(handle)
+            self.model = payload.get("model")
+            self.scaler = payload.get("scaler")
+            self.feature_names = payload.get("feature_names", [])
+            self.baseline_stats = payload.get("baseline_stats", {})
+            self.is_fitted = self.model is not None and self.scaler is not None
+        except Exception as exc:
+            logger.warning("Failed to load anomaly detector state: %s", exc)
+            self.model = None
+            self.scaler = None
+            self.is_fitted = False
+            self.feature_names = []
+            self.baseline_stats = {}
+
+    def _persist_state(self) -> None:
+        """Persist the trained anomaly-detector state to disk."""
+        if self.model is None or self.scaler is None:
+            return
+
+        self._state_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._state_path.open("wb") as handle:
+            pickle.dump(
+                {
+                    "model": self.model,
+                    "scaler": self.scaler,
+                    "feature_names": self.feature_names,
+                    "baseline_stats": self.baseline_stats,
+                },
+                handle,
+            )
     
     def prepare_features(self, cost_data: list[dict[str, Any]]) -> pd.DataFrame:
         """
@@ -146,6 +187,7 @@ class AnomalyDetector:
                 "median_cost": float(df["amount"].median()),
                 "p95_cost": float(df["amount"].quantile(0.95)),
             }
+            self._persist_state()
             
             logger.info(f"Anomaly detector trained on {len(df)} samples")
             

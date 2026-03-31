@@ -2,11 +2,15 @@
 CloudPulse AI - ML Service
 API endpoints for predictions and anomaly detection.
 """
+import time
 from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.core.config import get_settings
 from app.api.auth import get_current_user, TokenPayload
+from app.core.config import get_settings
+from app.core.observability import DETECTION_DURATION, PREDICTION_DURATION
+from app.core.tracing import get_tracer
 from app.models import (
     DetectAnomaliesRequest,
     DetectResponse,
@@ -22,6 +26,7 @@ from app.services import get_detector, get_predictor
 
 router = APIRouter()
 settings = get_settings()
+tracer = get_tracer(__name__)
 
 
 @router.post("/train", response_model=TrainResponse)
@@ -34,33 +39,32 @@ async def train_models(
     
     Requires historical cost data with at least 30 data points.
     """
-    predictor = get_predictor()
-    detector = get_detector()
-    
-    # Convert to list of dicts
-    cost_data = [
-        {
-            "date": point.date,
-            "amount": float(point.amount),
-            "service": point.service,
-        }
-        for point in request.cost_data
-    ]
-    
-    # Train predictor
-    predictor_result = predictor.train(cost_data)
-    
-    # Train anomaly detector
-    detector_result = detector.train(cost_data)
-    
-    success = predictor_result.get("success", False) and detector_result.get("success", False)
-    
-    return TrainResponse(
-        success=success,
-        message="Models trained successfully" if success else "Training failed for one or more models",
-        predictor_status=predictor_result,
-        detector_status=detector_result,
-    )
+    with tracer.start_as_current_span("ml.train_models") as span:
+        predictor = get_predictor()
+        detector = get_detector()
+
+        cost_data = [
+            {
+                "date": point.date,
+                "amount": float(point.amount),
+                "service": point.service,
+            }
+            for point in request.cost_data
+        ]
+        span.set_attribute("cloudpulse.training.records", len(cost_data))
+
+        predictor_result = predictor.train(cost_data)
+        detector_result = detector.train(cost_data)
+
+        success = predictor_result.get("success", False) and detector_result.get("success", False)
+        span.set_attribute("cloudpulse.training.success", success)
+
+        return TrainResponse(
+            success=success,
+            message="Models trained successfully" if success else "Training failed for one or more models",
+            predictor_status=predictor_result,
+            detector_status=detector_result,
+        )
 
 
 @router.post("/predict", response_model=PredictResponse)
@@ -74,42 +78,41 @@ async def predict_costs(
     Returns predictions with confidence intervals.
     """
     predictor = get_predictor()
-    
-    if not predictor.is_fitted:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Model not trained. Call /train endpoint first.",
+    started_at = time.perf_counter()
+
+    with tracer.start_as_current_span("ml.predict_costs") as span:
+        cost_data = [
+            {
+                "date": point.date,
+                "amount": float(point.amount),
+                "service": point.service,
+            }
+            for point in request.cost_data
+        ]
+        span.set_attribute("cloudpulse.prediction.records", len(cost_data))
+        span.set_attribute("cloudpulse.prediction.days", request.days)
+
+        result = await predictor.predict(
+            days=request.days,
+            include_history=request.include_history,
+            cost_data=cost_data,
         )
-    
-    # Predict costs
-    # Convert to list of dicts
-    cost_data = [
-        {
-            "date": point.date,
-            "amount": float(point.amount),
-            "service": point.service,
-        }
-        for point in request.cost_data
-    ]
-    
-    # Predict costs
-    result = await predictor.predict(
-        days=request.days,
-        include_history=request.include_history,
-        cost_data=cost_data # Pass context
-    )
-    
-    if not result.get("success"):
+
+        if not result.get("success"):
+            span.set_attribute("cloudpulse.prediction.success", False)
+            PREDICTION_DURATION.labels(status="failed").observe(time.perf_counter() - started_at)
+            return PredictResponse(
+                success=False,
+                error=result.get("error", "Prediction failed"),
+            )
+        span.set_attribute("cloudpulse.prediction.success", True)
+        PREDICTION_DURATION.labels(status="success").observe(time.perf_counter() - started_at)
+
         return PredictResponse(
-            success=False,
-            error=result.get("error", "Prediction failed"),
+            success=True,
+            predictions=result["predictions"],
+            summary=result["summary"],
         )
-    
-    return PredictResponse(
-        success=True,
-        predictions=result["predictions"],
-        summary=result["summary"],
-    )
 
 
 @router.post("/detect", response_model=DetectResponse)
@@ -123,42 +126,49 @@ async def detect_anomalies(
     If model is not trained, trains on the provided data first.
     """
     detector = get_detector()
-    
-    # Convert to list of dicts
-    cost_data = [
-        {
-            "date": point.date,
-            "amount": float(point.amount),
-            "service": point.service,
-        }
-        for point in request.cost_data
-    ]
-    
-    # Train if not already fitted
-    if not detector.is_fitted:
-        train_result = detector.train(cost_data)
-        if not train_result.get("success"):
+    started_at = time.perf_counter()
+
+    with tracer.start_as_current_span("ml.detect_anomalies") as span:
+        cost_data = [
+            {
+                "date": point.date,
+                "amount": float(point.amount),
+                "service": point.service,
+            }
+            for point in request.cost_data
+        ]
+        span.set_attribute("cloudpulse.detection.records", len(cost_data))
+
+        if not detector.is_fitted:
+            train_result = detector.train(cost_data)
+            if not train_result.get("success"):
+                span.set_attribute("cloudpulse.detection.success", False)
+                DETECTION_DURATION.labels(status="failed").observe(time.perf_counter() - started_at)
+                return DetectResponse(
+                    success=False,
+                    error=train_result.get("error", "Failed to train detector"),
+                )
+
+        result = detector.detect(cost_data)
+
+        if not result.get("success"):
+            span.set_attribute("cloudpulse.detection.success", False)
+            DETECTION_DURATION.labels(status="failed").observe(time.perf_counter() - started_at)
             return DetectResponse(
                 success=False,
-                error=train_result.get("error", "Failed to train detector"),
+                error=result.get("error", "Detection failed"),
             )
-    
-    # Detect anomalies
-    result = detector.detect(cost_data)
-    
-    if not result.get("success"):
+        span.set_attribute("cloudpulse.detection.success", True)
+        span.set_attribute("cloudpulse.detection.anomalies_found", result["anomalies_found"])
+        DETECTION_DURATION.labels(status="success").observe(time.perf_counter() - started_at)
+
         return DetectResponse(
-            success=False,
-            error=result.get("error", "Detection failed"),
+            success=True,
+            total_records=result["total_records"],
+            anomalies_found=result["anomalies_found"],
+            anomaly_rate=result["anomaly_rate"],
+            anomalies=result["anomalies"],
         )
-    
-    return DetectResponse(
-        success=True,
-        total_records=result["total_records"],
-        anomalies_found=result["anomalies_found"],
-        anomaly_rate=result["anomaly_rate"],
-        anomalies=result["anomalies"],
-    )
 
 
 @router.post("/detect/single", response_model=SingleAnomalyResponse)
@@ -209,12 +219,13 @@ async def get_trend_components() -> dict:
     
     Useful for understanding cost patterns.
     """
-    predictor = get_predictor()
-    
-    if not predictor.is_fitted:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Model not trained.",
-        )
-    
-    return predictor.get_trend_components()
+    with tracer.start_as_current_span("ml.get_trend_components"):
+        predictor = get_predictor()
+
+        if not predictor.is_fitted:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Model not trained.",
+            )
+
+        return predictor.get_trend_components()

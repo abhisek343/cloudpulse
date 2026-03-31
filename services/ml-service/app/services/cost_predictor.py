@@ -2,19 +2,32 @@
 CloudPulse AI - ML Service
 Cost prediction using Amazon Chronos (Foundation Model).
 """
+import asyncio
+import inspect
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
-import torch
 import numpy as np
 import pandas as pd
-from anyio import to_thread
-from chronos import ChronosPipeline
 from app.core.config import get_settings
+
+if TYPE_CHECKING:
+    from chronos import ChronosPipeline
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+def _get_torch() -> Any:
+    try:
+        import torch
+    except ImportError as exc:
+        raise RuntimeError(
+            "Torch is not installed. Install the ML service with the 'inference' extra."
+        ) from exc
+
+    return torch
 
 
 class CostPredictor:
@@ -26,8 +39,12 @@ class CostPredictor:
     """
     
     def __init__(self) -> None:
-        self.pipeline: Optional[ChronosPipeline] = None
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.pipeline: Optional["ChronosPipeline"] = None
+        try:
+            torch = _get_torch()
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        except RuntimeError:
+            self.device = "cpu"
         self.model_name = f"amazon/chronos-t5-{settings.chronos_model_size}"
         self._last_training_date: Optional[datetime] = None
     
@@ -44,6 +61,14 @@ class CostPredictor:
     def _load_model(self) -> None:
         """Lazy load the heavy model."""
         if self.pipeline is None:
+            try:
+                from chronos import ChronosPipeline
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Chronos is not installed. Install the ML service with the 'inference' extra."
+                ) from exc
+            torch = _get_torch()
+
             logger.info(f"Loading Chronos model: {self.model_name} on {self.device}...")
             self.pipeline = ChronosPipeline.from_pretrained(
                 self.model_name,
@@ -52,10 +77,10 @@ class CostPredictor:
             )
             logger.info("Chronos model loaded successfully.")
 
-    def prepare_data(self, cost_data: list[dict[str, Any]]) -> torch.Tensor:
+    def prepare_data(self, cost_data: list[dict[str, Any]]) -> Any:
         """
         Prepare cost data for Chronos.
-        Returns a torch Tensor for model input.
+        Returns a torch Tensor when torch is installed, otherwise a numpy array.
         """
         df = pd.DataFrame(cost_data)
         
@@ -72,9 +97,14 @@ class CostPredictor:
         date_range = pd.date_range(start=df["date"].min(), end=df["date"].max(), freq="D")
         df = df.set_index("date").reindex(date_range).fillna(0)
         
-        # Chronos expects a 1D tensor or numpy array context, ideally as a Series
-        # We return the values as a tensor input context
-        return torch.tensor(df["amount"].values, dtype=torch.float32)
+        values = df["amount"].to_numpy(dtype=np.float32)
+
+        try:
+            torch = _get_torch()
+        except RuntimeError:
+            return values
+
+        return torch.tensor(values, dtype=torch.float32)
 
     def train(self, cost_data: list[dict[str, Any]]) -> dict[str, Any]:
         """
@@ -103,6 +133,24 @@ class CostPredictor:
             logger.error(f"Model initialization failed: {e}")
             return {"success": False, "error": str(e)}
 
+    def _predict_with_pipeline(self, context_tensor: Any, days: int) -> Any:
+        """Call Chronos using the installed API shape."""
+        if self.pipeline is None:
+            raise RuntimeError("Chronos pipeline is not loaded")
+
+        predict_signature = inspect.signature(self.pipeline.predict)
+        predict_kwargs: dict[str, Any] = {
+            "prediction_length": days,
+            "num_samples": 20,
+        }
+
+        if "inputs" in predict_signature.parameters:
+            predict_kwargs["inputs"] = context_tensor
+        else:
+            predict_kwargs["context"] = context_tensor
+
+        return self.pipeline.predict(**predict_kwargs)
+
     async def predict(
         self,
         days: int | None = None,
@@ -129,18 +177,17 @@ class CostPredictor:
             # 2. Generate Forecast - Run in thread to avoid blocking event loop
             # Chronos expects list of contexts. We have 1 series.
             # num_samples=20 allows us to compute confidence intervals
-            forecast = await to_thread.run_sync(
-                lambda: self.pipeline.predict(
-                    context=context_tensor,
-                    prediction_length=days,
-                    num_samples=20, 
-                )
+            forecast = await asyncio.to_thread(
+                self._predict_with_pipeline,
+                context_tensor,
+                days,
             )
             # forecast shape: (1, num_samples, prediction_length)
             
             # 3. Process Results
             # Compute median and quantiles
             forecast_tensor = forecast[0] # (num_samples, days)
+            torch = _get_torch()
             median = torch.median(forecast_tensor, dim=0).values.numpy()
             lower = torch.quantile(forecast_tensor, 0.1, dim=0).numpy()
             upper = torch.quantile(forecast_tensor, 0.9, dim=0).numpy()
@@ -170,13 +217,15 @@ class CostPredictor:
             
             # Summary
             total_predicted = sum(r["predicted_cost"] for r in result)
+            average_daily = total_predicted / days if days else 0
             
             return {
                 "success": True,
                 "predictions": result,
                 "summary": {
                     "total_predicted_cost": round(total_predicted, 2),
-                    "model": "Amazon Chronos (Zero-Shot)",
+                    "average_daily_cost": round(average_daily, 2),
+                    "forecast_days": days,
                     "confidence_level": settings.prediction_confidence_threshold,
                 },
             }

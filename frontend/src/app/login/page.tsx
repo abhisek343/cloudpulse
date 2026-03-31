@@ -6,11 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import Link from "next/link";
-import { Cloud, Lock, Mail, Loader2 } from "lucide-react";
+import { Cloud, Eye, EyeOff, Lock, Mail, Loader2 } from "lucide-react";
 
 export default function LoginPage() {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const [showPassword, setShowPassword] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const { login } = useAuth();
@@ -22,8 +23,8 @@ export default function LoginPage() {
 
         try {
             await login(email, password);
-        } catch (err: any) {
-            setError(err.message || "Invalid credentials");
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : "Invalid credentials");
         } finally {
             setIsSubmitting(false);
         }
@@ -66,26 +67,30 @@ export default function LoginPage() {
                         </div>
 
                         <div className="space-y-2">
-                            <div className="flex items-center justify-between">
-                                <Label htmlFor="password">Password</Label>
-                                <Link
-                                    href="/forgot-password"
-                                    className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                                >
-                                    Forgot password?
-                                </Link>
-                            </div>
+                            <Label htmlFor="password">Password</Label>
                             <div className="relative">
                                 <Lock className="absolute left-3 top-2.5 h-5 w-5 text-slate-500" />
                                 <Input
                                     id="password"
-                                    type="password"
+                                    type={showPassword ? "text" : "password"}
                                     placeholder="••••••••"
-                                    className="pl-10"
+                                    className="pl-10 pr-10"
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
                                     required
                                 />
+                                <button
+                                    type="button"
+                                    className="absolute right-3 top-2.5 text-slate-500 transition-colors hover:text-slate-300"
+                                    onClick={() => setShowPassword((value) => !value)}
+                                    aria-label={showPassword ? "Hide password" : "Show password"}
+                                >
+                                    {showPassword ? (
+                                        <EyeOff className="h-5 w-5" />
+                                    ) : (
+                                        <Eye className="h-5 w-5" />
+                                    )}
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -103,8 +108,19 @@ export default function LoginPage() {
                     </Button>
                 </form>
 
+                <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-300">Demo Login</p>
+                    <p className="mt-2 text-sm text-slate-300">
+                        Seed the local demo tenant, then sign in with:
+                    </p>
+                    <div className="mt-3 space-y-1 font-mono text-sm text-slate-200">
+                        <p>demo@cloudpulse.local</p>
+                        <p>DemoPass123!</p>
+                    </div>
+                </div>
+
                 <p className="text-center text-sm text-slate-400">
-                    Don't have an account?{" "}
+                    Don&apos;t have an account?{" "}
                     <Link
                         href="/register"
                         className="font-medium text-blue-400 hover:text-blue-300 transition-colors"

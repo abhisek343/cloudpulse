@@ -77,12 +77,44 @@ export interface CloudAccount {
 }
 
 export interface CloudAccountCreate {
-    provider: "aws" | "gcp" | "azure";
+    provider: "demo" | "aws" | "gcp" | "azure";
     account_id: string;
     account_name: string;
-    credentials?: Record<string, any>;
+    credentials?: Record<string, unknown>;
 }
 
+export interface RuntimeProviderStatus {
+    configured: boolean;
+    readiness: string;
+    note: string;
+}
+
+export interface ProviderPreflightCheck {
+    name: string;
+    status: string;
+    detail: string;
+}
+
+export interface ProviderPreflightResult {
+    provider: string;
+    configured: boolean;
+    ready: boolean;
+    credential_source: string;
+    cost_source: string;
+    missing_env: string[];
+    checks: ProviderPreflightCheck[];
+}
+
+export interface RuntimeStatus {
+    environment: string;
+    cloud_sync_mode: "demo" | "live" | string;
+    allow_live_cloud_sync: boolean;
+    default_demo_provider: string;
+    default_demo_scenario: string;
+    llm_provider: string;
+    llm_configured: boolean;
+    providers: Record<string, RuntimeProviderStatus>;
+}
 
 
 const safeCall = async <T>(promise: Promise<any>): Promise<ApiResult<T>> => {
@@ -142,6 +174,14 @@ export async function getCloudAccounts() {
     return safeCall<{ items: CloudAccount[], total: number }>(costApi.get("/accounts/"));
 }
 
+export async function getRuntimeStatus() {
+    return safeCall<RuntimeStatus>(costApi.get("/health/runtime"));
+}
+
+export async function getProviderPreflight(provider: string) {
+    return safeCall<ProviderPreflightResult>(costApi.get(`/health/preflight/${provider}`));
+}
+
 export async function addCloudAccount(data: CloudAccountCreate) {
     return safeCall<CloudAccount>(costApi.post("/accounts/", data));
 }
@@ -156,8 +196,11 @@ export async function syncCloudAccount(id: string) {
 
 
 // ML Service API Functions
-export async function getPredictions(days = 30) {
-    return safeCall<any>(mlApi.post("/ml/predict", { days }));
+export async function getPredictions(
+    days = 30,
+    costData: Array<{ date: string; amount: number; service?: string | null }>,
+) {
+    return safeCall<any>(mlApi.post("/ml/predict", { days, cost_data: costData }));
 }
 
 export async function getAnomalies(costData: any[]) {

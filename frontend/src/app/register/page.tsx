@@ -6,11 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import Link from "next/link";
-import { Cloud, Lock, Mail, Building, User, Loader2 } from "lucide-react";
+import { Cloud, Lock, Mail, Building, User, Loader2, Eye, EyeOff } from "lucide-react";
 
 export default function RegisterPage() {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const [showPassword, setShowPassword] = useState(false);
     const [fullName, setFullName] = useState("");
     const [orgName, setOrgName] = useState("");
     const [error, setError] = useState<string | null>(null);
@@ -24,8 +25,8 @@ export default function RegisterPage() {
 
         try {
             await register(email, password, orgName, fullName);
-        } catch (err: any) {
-            setError(err.message || "Registration failed");
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : "Registration failed");
         } finally {
             setIsSubmitting(false);
         }
@@ -103,13 +104,25 @@ export default function RegisterPage() {
                                 <Lock className="absolute left-3 top-2.5 h-5 w-5 text-slate-500" />
                                 <Input
                                     id="password"
-                                    type="password"
+                                    type={showPassword ? "text" : "password"}
                                     placeholder="••••••••"
-                                    className="pl-10"
+                                    className="pl-10 pr-10"
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
                                     required
                                 />
+                                <button
+                                    type="button"
+                                    className="absolute right-3 top-2.5 text-slate-500 transition-colors hover:text-slate-300"
+                                    onClick={() => setShowPassword((value) => !value)}
+                                    aria-label={showPassword ? "Hide password" : "Show password"}
+                                >
+                                    {showPassword ? (
+                                        <EyeOff className="h-5 w-5" />
+                                    ) : (
+                                        <Eye className="h-5 w-5" />
+                                    )}
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -126,6 +139,10 @@ export default function RegisterPage() {
                         )}
                     </Button>
                 </form>
+
+                <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-4 text-sm text-slate-400">
+                    Want a faster walkthrough? Seed the local demo tenant and sign in with the demo account from the login page.
+                </div>
 
                 <p className="text-center text-sm text-slate-400">
                     Already have an account?{" "}

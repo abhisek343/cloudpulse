@@ -38,7 +38,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     } else {
                         localStorage.removeItem("token");
                     }
-                } catch (error) {
+                } catch {
                     localStorage.removeItem("token");
                 }
             }

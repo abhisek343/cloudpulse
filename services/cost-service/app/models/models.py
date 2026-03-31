@@ -25,6 +25,7 @@ from app.core.database import Base
 
 class CloudProvider(str, Enum):
     """Supported cloud providers."""
+    DEMO = "demo"
     AWS = "aws"
     GCP = "gcp"
     AZURE = "azure"
@@ -125,7 +126,7 @@ class CloudAccount(Base):
     provider: Mapped[str] = mapped_column(String(20), nullable=False)
     account_id: Mapped[str] = mapped_column(String(100), nullable=False)
     account_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    credentials: Mapped[dict] = mapped_column(JSONB, nullable=True)  # Encrypted
+    credentials: Mapped[dict] = mapped_column(JSONB, nullable=True)  # Optional per-account overrides
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(

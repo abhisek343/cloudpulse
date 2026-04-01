@@ -7,6 +7,7 @@ import {
     TrendingUp,
     AlertTriangle,
     Cloud,
+    CloudCog,
     Settings,
     CreditCard,
     Server
@@ -30,12 +31,12 @@ export function Sidebar() {
         <aside className="fixed left-0 top-0 z-40 flex h-screen w-64 flex-col bg-gray-950 border-r border-gray-800">
             {/* Logo */}
             <div className="flex h-16 items-center gap-2 px-6 border-b border-gray-800">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-purple-600">
-                    <Cloud className="h-6 w-6 text-white" />
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-600">
+                    <CloudCog className="h-6 w-6 text-white" />
                 </div>
                 <div>
                     <h1 className="text-lg font-bold text-white">CloudPulse</h1>
-                    <p className="text-xs text-gray-500">AI FinOps</p>
+                    <p className="text-xs text-gray-500">Cloud FinOps</p>
                 </div>
             </div>
 

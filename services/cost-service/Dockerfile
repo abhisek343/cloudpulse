@@ -8,11 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md alembic.ini ./
 RUN pip install --no-cache-dir -e .
 
 # Copy application code
 COPY app/ ./app/
+COPY alembic/ ./alembic/
 COPY scripts/ ./scripts/
 
 # Create non-root user

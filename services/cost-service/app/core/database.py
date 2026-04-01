@@ -2,6 +2,7 @@
 CloudPulse AI - Cost Service
 Database connection and session management.
 """
+import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -76,7 +77,7 @@ async def init_db() -> None:
 
     alembic_config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
     alembic_config.set_main_option("sqlalchemy.url", str(settings.database_url))
-    command.upgrade(alembic_config, "head")
+    await asyncio.to_thread(command.upgrade, alembic_config, "head")
 
 
 async def close_db() -> None:

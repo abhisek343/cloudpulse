@@ -33,7 +33,7 @@ export function Header() {
                         <p className="text-[10px] text-gray-500 uppercase tracking-wider">{user?.role || "Member"}</p>
                     </div>
                     <button 
-                        onClick={logout}
+                        onClick={() => void logout()}
                         className="ml-2 rounded-lg p-1.5 text-gray-500 hover:bg-red-500/10 hover:text-red-400 transition-colors"
                         title="Logout"
                     >

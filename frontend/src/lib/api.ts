@@ -1,49 +1,66 @@
-import axios, { AxiosInstance, AxiosError } from "axios";
+import axios, { AxiosHeaders, AxiosInstance } from "axios";
 
-const COST_SERVICE_URL = process.env.NEXT_PUBLIC_COST_SERVICE_URL || "http://localhost:8001";
-const ML_SERVICE_URL = process.env.NEXT_PUBLIC_ML_SERVICE_URL || "http://localhost:8002";
+function readCsrfToken(): string | null {
+    if (typeof document === "undefined") {
+        return null;
+    }
 
-// Add token interceptor helper
-const addAuthInterceptor = (instance: AxiosInstance) => {
+    const csrfCookie = document.cookie
+        .split("; ")
+        .find((entry) => entry.startsWith("__Host-cloudpulse_csrf_token=") || entry.startsWith("cloudpulse_csrf_token="));
+
+    if (!csrfCookie) {
+        return null;
+    }
+
+    const [, value] = csrfCookie.split("=", 2);
+    return value ? decodeURIComponent(value) : null;
+}
+
+function attachCsrfHeader(instance: AxiosInstance): void {
     instance.interceptors.request.use((config) => {
-        const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-        if (token) {
-            config.headers.Authorization = `Bearer ${token}`;
+        const method = config.method?.toUpperCase();
+        if (method && !["GET", "HEAD", "OPTIONS"].includes(method)) {
+            const csrfToken = readCsrfToken();
+            if (csrfToken) {
+                if (typeof config.headers?.set === "function") {
+                    config.headers.set("X-CSRF-Token", csrfToken);
+                } else {
+                    const headers = AxiosHeaders.from(config.headers);
+                    headers.set("X-CSRF-Token", csrfToken);
+                    config.headers = headers;
+                }
+            }
         }
         return config;
     });
-
-    instance.interceptors.response.use(
-        (response) => response,
-        (error: AxiosError) => {
-            if (error.response?.status === 401) {
-                if (typeof window !== "undefined") {
-                    localStorage.removeItem("token");
-                    // Optionally redirect to login
-                }
-            }
-            return Promise.reject(error);
-        }
-    );
-};
+}
 
 // Cost Service Client
 export const costApi = axios.create({
-    baseURL: `${COST_SERVICE_URL}/api/v1`,
+    baseURL: "/api/cost",
     headers: {
         "Content-Type": "application/json",
     },
 });
-addAuthInterceptor(costApi);
+attachCsrfHeader(costApi);
 
 // ML Service Client
 export const mlApi = axios.create({
-    baseURL: `${ML_SERVICE_URL}/api/v1`,
+    baseURL: "/api/ml",
     headers: {
         "Content-Type": "application/json",
     },
 });
-addAuthInterceptor(mlApi);
+attachCsrfHeader(mlApi);
+
+export const authApi = axios.create({
+    baseURL: "/api/auth",
+    headers: {
+        "Content-Type": "application/json",
+    },
+});
+attachCsrfHeader(authApi);
 
 // Standard result wrapper
 export interface ApiResult<T> {
@@ -136,8 +153,8 @@ export async function login(email: string, password: string) {
     formData.append("username", email);
     formData.append("password", password);
 
-    return safeCall<{ access_token: string; token_type: string }>(
-        costApi.post("/auth/login", formData, {
+    return safeCall<{ token_type: string }>(
+        authApi.post("/login", formData, {
             headers: { "Content-Type": "multipart/form-data" }
         })
     );
@@ -145,12 +162,16 @@ export async function login(email: string, password: string) {
 
 export async function register(email: string, password: string, organization_name: string, full_name?: string) {
     return safeCall<any>(
-        costApi.post("/auth/register", { email, password, organization_name, full_name })
+        authApi.post("/register", { email, password, organization_name, full_name })
     );
 }
 
 export async function getMe() {
-    return safeCall<any>(costApi.get("/auth/me"));
+    return safeCall<any>(authApi.get("/me"));
+}
+
+export async function logout() {
+    return safeCall<void>(authApi.post("/logout"));
 }
 
 // Cost Service API Functions

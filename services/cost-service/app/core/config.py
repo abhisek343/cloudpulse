@@ -81,6 +81,13 @@ class Settings(BaseSettings):
     llm_api_key: str | None = None
     llm_model: str = "openrouter/free"
     llm_base_url: str | None = "https://openrouter.ai/api/v1"
+    llm_timeout_seconds: float = 60.0
+    llm_fallback_models: list[str] = Field(
+        default_factory=lambda: [
+            "stepfun/step-3.5-flash:free",
+            "nvidia/nemotron-3-super-120b-a12b-20230311:free",
+        ]
+    )
     
     # Kubernetes / Prometheus
     prometheus_url: str = "http://prometheus-server:9090"

@@ -31,8 +31,11 @@ class FakeAsyncResponse:
 class FakeAsyncClient:
     """Async client test double for OpenRouter requests."""
 
-    def __init__(self, response: FakeAsyncResponse) -> None:
-        self.response = response
+    def __init__(self, responses: list[FakeAsyncResponse | Exception] | FakeAsyncResponse) -> None:
+        if isinstance(responses, list):
+            self.responses = responses
+        else:
+            self.responses = [responses]
         self.calls: list[dict] = []
 
     async def __aenter__(self) -> "FakeAsyncClient":
@@ -43,7 +46,10 @@ class FakeAsyncClient:
 
     async def post(self, url: str, *, headers: dict, json: dict) -> FakeAsyncResponse:
         self.calls.append({"url": url, "headers": headers, "json": json})
-        return self.response
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 @pytest.mark.asyncio
@@ -54,6 +60,8 @@ async def test_openrouter_uses_direct_api(monkeypatch: pytest.MonkeyPatch) -> No
     service.model = "openrouter/free"
     service.api_key = "test-key"
     service.base_url = "https://openrouter.ai/api/v1"
+    service.timeout_seconds = 60.0
+    service.fallback_models = ["stepfun/step-3.5-flash:free"]
 
     fake_client = FakeAsyncClient(
         FakeAsyncResponse(
@@ -78,6 +86,46 @@ async def test_openrouter_uses_direct_api(monkeypatch: pytest.MonkeyPatch) -> No
     assert fake_client.calls[0]["url"] == "https://openrouter.ai/api/v1/chat/completions"
     assert fake_client.calls[0]["json"]["model"] == "openrouter/free"
     assert fake_client.calls[0]["headers"]["Authorization"] == "Bearer test-key"
+
+
+@pytest.mark.asyncio
+async def test_openrouter_free_router_falls_back_to_concrete_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The free router should fall back to concrete free models after a timeout."""
+    service = LLMService()
+    service.provider = "openrouter"
+    service.model = "openrouter/free"
+    service.api_key = "test-key"
+    service.base_url = "https://openrouter.ai/api/v1"
+    service.timeout_seconds = 45.0
+    service.fallback_models = ["stepfun/step-3.5-flash:free"]
+
+    fake_client = FakeAsyncClient(
+        [
+            httpx.ReadTimeout("timed out"),
+            FakeAsyncResponse(
+                {
+                    "choices": [
+                        {"message": {"content": "Fallback reply"}}
+                    ]
+                }
+            ),
+        ]
+    )
+
+    def fake_async_client(*args, **kwargs) -> FakeAsyncClient:
+        del args, kwargs
+        return fake_client
+
+    monkeypatch.setattr("app.services.llm_service.httpx.AsyncClient", fake_async_client)
+
+    response = await service.get_chat_response("hello", {"total_cost": 88})
+
+    assert response == "Fallback reply"
+    assert len(fake_client.calls) == 2
+    assert fake_client.calls[0]["json"]["model"] == "openrouter/free"
+    assert fake_client.calls[1]["json"]["model"] == "stepfun/step-3.5-flash:free"
 
 
 @pytest.mark.asyncio

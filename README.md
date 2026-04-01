@@ -93,7 +93,7 @@ CloudPulse AI is my answer to: *"What if FinOps tools were actually proactive?"*
               |                       |                   |
               v                       v                   v
     ================================================================
-                    Frontend Calls Services Directly
+               Next.js Same-Origin API Proxy Layer
     ================================================================
               |                                           |
               v                                           v

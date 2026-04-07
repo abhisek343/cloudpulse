@@ -153,3 +153,29 @@ async def test_non_openrouter_uses_litellm(monkeypatch: pytest.MonkeyPatch) -> N
     assert captured["model"] == "gpt-4o-mini"
     assert captured["api_key"] == "test-key"
     assert captured["base_url"] == "https://api.openai.com/v1"
+
+
+@pytest.mark.asyncio
+async def test_ollama_does_not_require_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Local Ollama should work without a hosted-provider API key."""
+    service = LLMService()
+    service.provider = "ollama"
+    service.model = "llama3.1"
+    service.api_key = None
+    service.base_url = "http://ollama:11434"
+
+    captured: dict = {}
+
+    def fake_completion(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="Local reply"))]
+        )
+
+    monkeypatch.setattr("app.services.llm_service.completion", fake_completion)
+
+    response = await service.get_chat_response("Summarize this.", {"total_cost": 88})
+
+    assert response == "Local reply"
+    assert captured["model"] == "llama3.1"
+    assert "api_key" not in captured

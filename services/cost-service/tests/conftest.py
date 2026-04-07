@@ -3,16 +3,19 @@ CloudPulse AI - Cost Service
 Test configuration and fixtures.
 """
 import os
+import re
 from collections.abc import AsyncGenerator
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.engine import make_url
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.cache import get_cache
+from app.core.config import get_settings
 from app.core.database import Base, get_db
 from app.core.rate_limit import rate_limiter
 from app.core.security import create_access_token, get_password_hash
@@ -21,8 +24,10 @@ from app.models import CloudAccount, CostRecord, Organization, User
 
 TEST_DATABASE_URL = os.getenv(
     "TEST_DATABASE_URL",
-    "postgresql+asyncpg://postgres:cloudpulse-dev-password@localhost:55433/cloudpulse",
+    "postgresql+asyncpg://postgres:cloudpulse-dev-password@localhost:55433/cloudpulse_test",
 )
+TEST_DATABASE_NAME = make_url(TEST_DATABASE_URL).database
+APP_DATABASE_NAME = make_url(str(get_settings().database_url)).database
 
 engine = None
 session_factory = None
@@ -51,6 +56,15 @@ class FakeCache:
 
     async def delete(self, key: str) -> None:
         self._store.pop(key, None)
+
+    async def increment(self, key: str, ttl: int) -> int:
+        del ttl
+        value = self._store.get(key, 0)
+        if not isinstance(value, int):
+            value = 0
+        value += 1
+        self._store[key] = value
+        return value
 
     async def exists(self, key: str) -> bool:
         return key in self._store
@@ -89,10 +103,46 @@ async def override_get_cache() -> FakeCache:
     return fake_cache
 
 
+def _validate_test_database_target() -> None:
+    if not TEST_DATABASE_NAME:
+        raise RuntimeError("TEST_DATABASE_URL must include a database name")
+
+    if TEST_DATABASE_NAME == APP_DATABASE_NAME:
+        raise RuntimeError(
+            "Refusing to run tests against the application database. "
+            "Set TEST_DATABASE_URL to a dedicated test database."
+        )
+
+    if not re.fullmatch(r"[A-Za-z0-9_]+", TEST_DATABASE_NAME):
+        raise RuntimeError(
+            "TEST_DATABASE_URL must use a simple PostgreSQL database name "
+            "containing only letters, numbers, and underscores."
+        )
+
+
+async def _ensure_test_database() -> None:
+    admin_url = make_url(TEST_DATABASE_URL).set(database="postgres")
+    admin_engine = create_async_engine(admin_url, isolation_level="AUTOCOMMIT")
+
+    try:
+        async with admin_engine.connect() as conn:
+            database_exists = await conn.scalar(
+                text("SELECT 1 FROM pg_database WHERE datname = :database_name"),
+                {"database_name": TEST_DATABASE_NAME},
+            )
+            if not database_exists:
+                await conn.execute(text(f'CREATE DATABASE "{TEST_DATABASE_NAME}"'))
+    finally:
+        await admin_engine.dispose()
+
+
 @pytest_asyncio.fixture(scope="session", autouse=True, loop_scope="session")
 async def test_app() -> AsyncGenerator[None, None]:
     """Set up shared dependency overrides for the test application."""
     global engine, session_factory
+
+    _validate_test_database_target()
+    await _ensure_test_database()
 
     engine = create_async_engine(TEST_DATABASE_URL, echo=False)
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

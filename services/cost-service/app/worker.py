@@ -109,8 +109,14 @@ class Worker:
                 account.account_name,
                 account.provider,
             )
-            result = await cost_service.sync_account_costs(account, days=days)
-            logger.info("Sync completed: %s", result)
+            try:
+                result = await cost_service.sync_account_costs(account, days=days)
+                await db.commit()
+                logger.info("Sync completed: %s", result)
+            except Exception as e:
+                await db.commit()
+                logger.error("Sync failed for %s: %s", account.account_name, e)
+                await self._notify_sync_failure(db, account, str(e))
 
     async def handle_sync_all(self, data: dict[str, Any]):
         """Handle sync for all accounts in organization."""
@@ -121,7 +127,60 @@ class Worker:
             cost_service = CostSyncService(db, cache)
             logger.info("Starting sync for organization %s", org_id)
             results = await cost_service.sync_all_accounts(org_id, days=days)
+            await db.commit()
             logger.info("Organization sync completed. Processed %s accounts.", len(results))
+
+    async def _notify_sync_failure(self, db, account, error: str):
+        """Send notifications to channels subscribed to sync_failure events."""
+        from app.services.notification_service import (
+            build_sync_failure_payload,
+            get_notification_service,
+        )
+
+        try:
+            channels = await self._get_event_channels(db, account.organization_id, "sync_failure")
+            if not channels:
+                return
+
+            svc = get_notification_service()
+            payload = build_sync_failure_payload(account.account_name, account.provider, error)
+            for ch in channels:
+                await svc.send(ch.channel_type, ch.config, "sync_failure", payload)
+        except Exception as e:
+            logger.warning("Failed to send sync-failure notification: %s", e)
+
+    async def _notify_anomaly(self, db, org_id: str, anomaly: dict, account_name: str):
+        """Send notifications to channels subscribed to anomaly events."""
+        from app.services.notification_service import (
+            build_anomaly_payload,
+            get_notification_service,
+        )
+
+        try:
+            channels = await self._get_event_channels(db, org_id, "anomaly")
+            if not channels:
+                return
+
+            svc = get_notification_service()
+            payload = build_anomaly_payload(anomaly, account_name)
+            for ch in channels:
+                await svc.send(ch.channel_type, ch.config, "anomaly", payload)
+        except Exception as e:
+            logger.warning("Failed to send anomaly notification: %s", e)
+
+    @staticmethod
+    async def _get_event_channels(db, org_id: str, event: str):
+        """Return active notification channels subscribed to a given event."""
+        from sqlalchemy import select
+        from app.models import NotificationChannel
+
+        result = await db.execute(
+            select(NotificationChannel).where(
+                NotificationChannel.organization_id == org_id,
+                NotificationChannel.is_active.is_(True),
+            )
+        )
+        return [ch for ch in result.scalars().all() if event in (ch.events or [])]
 
     async def run(self):
         """Run the worker loop."""

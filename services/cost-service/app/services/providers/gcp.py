@@ -196,7 +196,20 @@ WHERE usage_start_time >= @start_time
         end_date: datetime,
         granularity: str = "MONTHLY",
     ) -> dict[str, Any]:
-        return {"total": Decimal("0"), "note": "GCP Forecast requires BigQuery ML"}
+        """
+        Generate a cost forecast using historical data and Chronos (ML service).
+
+        GCP does not expose a native billing forecast API, so we fetch
+        recent actuals from the BigQuery billing export and delegate
+        prediction to the ML service which uses Amazon Chronos (zero-shot).
+        """
+        from app.services.providers._forecast import chronos_forecast_fallback
+
+        return await chronos_forecast_fallback(
+            provider=self,
+            start_date=start_date,
+            end_date=end_date,
+        )
 
     async def validate_live_access(self) -> dict[str, Any]:
         """Run a minimal BigQuery validation query against the billing export."""

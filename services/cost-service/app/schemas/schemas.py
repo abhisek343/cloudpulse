@@ -108,11 +108,17 @@ class CloudAccountCreate(BaseModel):
     provider: CloudProvider
     account_id: str = Field(..., min_length=1, max_length=100)
     account_name: str = Field(..., min_length=1, max_length=255)
+    business_unit: str | None = Field(None, min_length=1, max_length=100)
+    environment: str | None = Field(None, min_length=1, max_length=100)
+    cost_center: str | None = Field(None, min_length=1, max_length=100)
     credentials: dict | None = None
 
 
 class CloudAccountUpdate(BaseModel):
     account_name: str | None = Field(None, min_length=1, max_length=255)
+    business_unit: str | None = Field(None, min_length=1, max_length=100)
+    environment: str | None = Field(None, min_length=1, max_length=100)
+    cost_center: str | None = Field(None, min_length=1, max_length=100)
     credentials: dict | None = None
     is_active: bool | None = None
 
@@ -123,9 +129,53 @@ class CloudAccountResponse(BaseSchema):
     provider: str
     account_id: str
     account_name: str
+    business_unit: str | None = None
+    environment: str | None = None
+    cost_center: str | None = None
     is_active: bool
     last_sync_at: datetime | None
+    last_sync_status: str
+    last_sync_error: str | None = None
+    last_sync_started_at: datetime | None = None
+    last_sync_completed_at: datetime | None = None
+    last_sync_records_imported: int | None = None
     created_at: datetime
+
+
+class CloudAccountStatusResponse(BaseModel):
+    """Sync telemetry and current data coverage for a cloud account."""
+
+    account_id: str
+    is_active: bool
+    last_sync_at: datetime | None = None
+    last_sync_status: str
+    last_sync_error: str | None = None
+    last_sync_started_at: datetime | None = None
+    last_sync_completed_at: datetime | None = None
+    last_sync_records_imported: int | None = None
+    total_records: int = 0
+    coverage_start: datetime | None = None
+    coverage_end: datetime | None = None
+    services_detected: int = 0
+    currency: str | None = None
+
+
+class CloudAccountDetectRequest(BaseModel):
+    """Input payload for provider-backed account detection."""
+
+    provider: CloudProvider
+    credentials: dict | None = None
+
+
+class CloudAccountDetectResponse(BaseModel):
+    """Suggested account metadata that the UI should still ask the user to confirm."""
+
+    provider: str
+    account_id: str
+    account_name: str
+    confidence: str
+    note: str
+    detected_metadata: dict[str, str] = Field(default_factory=dict)
 
 
 # === Cost Record Schemas ===
@@ -250,6 +300,51 @@ class AnomalyUpdateStatus(BaseModel):
     root_cause: str | None = None
 
 
+# === Notification Schemas ===
+
+
+class NotificationChannelType(StrEnum):
+    SLACK = "slack"
+    TEAMS = "teams"
+    WEBHOOK = "webhook"
+
+
+class NotificationEvent(StrEnum):
+    ANOMALY = "anomaly"
+    BUDGET = "budget"
+    SYNC_FAILURE = "sync_failure"
+    WEEKLY_REPORT = "weekly_report"
+
+
+class NotificationChannelCreate(BaseModel):
+    channel_type: NotificationChannelType
+    name: str = Field(..., min_length=1, max_length=255)
+    config: dict = Field(..., description="Channel config, must include webhook_url")
+    events: list[NotificationEvent] = Field(default=[NotificationEvent.ANOMALY, NotificationEvent.BUDGET])
+    is_active: bool = True
+
+
+class NotificationChannelUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=255)
+    config: dict | None = None
+    events: list[NotificationEvent] | None = None
+    is_active: bool | None = None
+
+
+class NotificationChannelResponse(BaseSchema, TimestampMixin):
+    id: str
+    organization_id: str
+    channel_type: str
+    name: str
+    events: list[str]
+    is_active: bool
+
+
+class NotificationTestResult(BaseModel):
+    success: bool
+    message: str
+
+
 # === API Response Wrappers ===
 
 
@@ -271,6 +366,7 @@ class HealthCheck(BaseModel):
     database: str = "connected"
     redis: str = "connected"
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+    circuit_breakers: dict[str, dict] = Field(default_factory=dict)
 
 
 class RuntimeProviderStatus(BaseModel):
@@ -287,10 +383,17 @@ class RuntimeStatus(BaseModel):
     environment: str
     cloud_sync_mode: str
     allow_live_cloud_sync: bool
+    cost_data_retention_months: int
     default_demo_provider: str
     default_demo_scenario: str
     llm_provider: str
+    llm_enabled: bool
     llm_configured: bool
+    llm_ready: bool
+    llm_execution_mode: str
+    llm_allow_external_inference: bool
+    llm_context_policy: str
+    llm_notice: str
     providers: dict[str, RuntimeProviderStatus]
 
 

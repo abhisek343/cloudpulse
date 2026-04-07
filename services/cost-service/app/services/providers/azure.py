@@ -162,13 +162,19 @@ class AzureProvider(CostProvider):
         granularity: str = "MONTHLY",
     ) -> dict[str, Any]:
         """
-        Azure Forecast API is complex/often requires different permissions.
-        For now, we return a mock or basic projection.
+        Generate a cost forecast using historical data and Chronos (ML service).
+
+        Azure Cost Management does not expose a simple forecast API with
+        standard RBAC, so we fetch recent actuals and delegate prediction
+        to the ML service which uses Amazon Chronos (zero-shot).
         """
-        return {
-            "total": Decimal("0"),
-            "note": "Azure Native Forecast not yet implemented in this adapter.",
-        }
+        from app.services.providers._forecast import chronos_forecast_fallback
+
+        return await chronos_forecast_fallback(
+            provider=self,
+            start_date=start_date,
+            end_date=end_date,
+        )
 
     async def validate_live_access(self) -> dict[str, Any]:
         """Run a minimal Cost Management usage query to verify live access."""

@@ -15,6 +15,13 @@ from app.core.config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+LOCAL_LLM_PROVIDERS = {"ollama"}
+
+
+def is_external_llm_provider(provider: str) -> bool:
+    """Return whether a provider sends prompts to a third-party hosted service."""
+    return provider.lower() not in LOCAL_LLM_PROVIDERS
+
 
 class LLMService:
     """
@@ -29,6 +36,14 @@ class LLMService:
         self.base_url = settings.llm_base_url
         self.timeout_seconds = settings.llm_timeout_seconds
         self.fallback_models = settings.llm_fallback_models
+
+    def is_external_provider(self) -> bool:
+        """Whether this service sends prompts to an externally hosted provider."""
+        return is_external_llm_provider(self.provider)
+
+    def requires_api_key(self) -> bool:
+        """Most hosted providers require an API key; local Ollama does not."""
+        return self.provider.lower() not in LOCAL_LLM_PROVIDERS
         
     def _get_model_name(self) -> str:
         """Get the full model name for litellm (e.g., 'gpt-3.5-turbo' or 'gemini/gemini-pro')."""
@@ -129,20 +144,38 @@ class LLMService:
             f"OpenRouter failed after trying free models [{attempted_models}]. {details}"
         )
 
-    def generate_cost_summary_prompt(self, data: dict[str, Any], user_query: str) -> str:
+    def generate_cost_summary_prompt(
+        self,
+        data: dict[str, Any],
+        user_query: str,
+        history: list[dict[str, str]] | None = None,
+    ) -> str:
         """
         Convert cost data into a natural language prompt.
+        Optionally includes conversation history for multi-turn context.
         """
         # Create a concise summary of the data context
         context_str = json.dumps(data, indent=2)
-        
+
+        history_block = ""
+        if history:
+            turns = []
+            for msg in history[-10:]:  # last 10 turns max
+                role_label = "User" if msg["role"] == "user" else "Assistant"
+                turns.append(f"{role_label}: {msg['content']}")
+            history_block = (
+                "\nPrevious Conversation:\n"
+                + "\n".join(turns)
+                + "\n"
+            )
+
         prompt = f"""
 You are CloudPulse AI, an expert FinOps analyst. 
 Analyze the following cloud cost data and answer the user's question.
 
 Context Data:
 {context_str}
-
+{history_block}
 User Question: "{user_query}"
 
 Instructions:
@@ -151,6 +184,7 @@ Instructions:
 3. Suggest 1 actionable optimization if applicable.
 4. Do not mention "JSON" or "data provided". Speak naturally.
 5. If the data doesn't contain the answer, say "I don't have enough data to answer that."
+6. If the user references something from a previous message, use the conversation history above.
 
 Answer:
 """
@@ -165,15 +199,23 @@ Answer:
         self,
         message: str,
         context_data: dict[str, Any] | None = None,
+        history: list[dict[str, str]] | None = None,
     ) -> str:
         """
         Get a response from the LLM.
         """
         if not self.api_key:
-            return "LLM integration is not configured. Please set LLM_API_KEY environment variable."
+            if self.requires_api_key():
+                return "LLM integration is not configured. Please set LLM_API_KEY environment variable."
+        if self.is_external_provider() and not settings.llm_allow_external_inference:
+            return "AI analysis is disabled because external inference is blocked by runtime policy."
             
         try:
-            prompt = self.generate_cost_summary_prompt(context_data or {}, message)
+            prompt = self.generate_cost_summary_prompt(
+                context_data or {},
+                message,
+                history=history,
+            )
 
             if self.provider == "openrouter":
                 return await self._get_openrouter_response(prompt)
@@ -182,8 +224,10 @@ Answer:
             kwargs = {
                 "model": self._get_model_name(),
                 "messages": [{"role": "user", "content": prompt}],
-                "api_key": self.api_key,
             }
+
+            if self.api_key:
+                kwargs["api_key"] = self.api_key
 
             if self.base_url:
                 kwargs["base_url"] = self.base_url
@@ -194,11 +238,11 @@ Answer:
             content = response.choices[0].message.content
             return content.strip()
             
-        except Exception as e:
+        except Exception:
             logger.exception("LLM call failed")
             return (
-                "The configured LLM provider failed. "
-                f"{e}"
+                "AI analysis is temporarily unavailable. "
+                "Please try again later or review the runtime settings."
             )
 
 

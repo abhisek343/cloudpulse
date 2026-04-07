@@ -12,6 +12,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     Text,
@@ -126,9 +127,17 @@ class CloudAccount(Base):
     provider: Mapped[str] = mapped_column(String(20), nullable=False)
     account_id: Mapped[str] = mapped_column(String(100), nullable=False)
     account_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    business_unit: Mapped[str | None] = mapped_column(String(100))
+    environment: Mapped[str | None] = mapped_column(String(100))
+    cost_center: Mapped[str | None] = mapped_column(String(100))
     credentials: Mapped[dict] = mapped_column(JSONB, nullable=True)  # Optional per-account overrides
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_sync_status: Mapped[str] = mapped_column(String(30), default="never_synced")
+    last_sync_error: Mapped[str | None] = mapped_column(Text)
+    last_sync_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_sync_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_sync_records_imported: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -341,4 +350,82 @@ class AuditLog(Base):
     __table_args__ = (
         Index("idx_audit_logs_org_created", "organization_id", "created_at"),
         Index("idx_audit_logs_user", "user_id"),
+    )
+
+
+class ChatMessage(Base):
+    """Persisted chat message for multi-turn conversations."""
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        primary_key=True,
+        default=lambda: str(uuid4()),
+    )
+    conversation_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        nullable=False,
+        index=True,
+    )
+    organization_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+    )
+    user_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("users.id", ondelete="CASCADE"),
+    )
+    role: Mapped[str] = mapped_column(String(20), nullable=False)  # "user" or "assistant"
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    grounding: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        Index("idx_chat_messages_conv", "conversation_id", "created_at"),
+        Index("idx_chat_messages_user", "user_id", "created_at"),
+    )
+
+
+class NotificationChannel(Base):
+    """Notification channel for alert delivery (Slack, Teams, Webhook)."""
+
+    __tablename__ = "notification_channels"
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        primary_key=True,
+        default=lambda: str(uuid4()),
+    )
+    organization_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+    )
+    channel_type: Mapped[str] = mapped_column(
+        String(20), nullable=False,
+    )  # "slack", "teams", "webhook"
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    config: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    # config: { webhook_url, channel (optional), ... }
+    events: Mapped[list] = mapped_column(
+        JSONB,
+        default=lambda: ["anomaly", "budget"],
+    )
+    # Supported events: "anomaly", "budget", "sync_failure", "weekly_report"
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        Index("idx_notification_channels_org", "organization_id"),
     )

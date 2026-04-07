@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { ProtectedRoute } from "@/components/layout/protected-route";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
     const pathname = usePathname();
@@ -19,7 +20,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 <Sidebar />
                 <div className="flex-1 lg:pl-64">
                     <Header />
-                    <main className="min-h-[calc(100-64px)]">{children}</main>
+                    <main className="min-h-[calc(100-64px)]">
+                        <ErrorBoundary>{children}</ErrorBoundary>
+                    </main>
                 </div>
             </div>
         </ProtectedRoute>

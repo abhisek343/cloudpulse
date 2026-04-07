@@ -69,6 +69,16 @@ export interface ApiResult<T> {
     error?: string;
 }
 
+export interface CostFilters {
+    account_id?: string;
+    provider?: string;
+    business_unit?: string;
+    environment?: string;
+    cost_center?: string;
+    service?: string;
+    region?: string;
+}
+
 export interface Prediction {
     date: string;
     predicted_cost: number;
@@ -88,8 +98,16 @@ export interface CloudAccount {
     provider: string;
     account_id: string;
     account_name: string;
+    business_unit?: string | null;
+    environment?: string | null;
+    cost_center?: string | null;
     is_active: boolean;
     last_sync_at?: string;
+    last_sync_status: string;
+    last_sync_error?: string | null;
+    last_sync_started_at?: string | null;
+    last_sync_completed_at?: string | null;
+    last_sync_records_imported?: number | null;
     total_cost_mtd?: number; // Fetched separately or enriched
 }
 
@@ -97,7 +115,35 @@ export interface CloudAccountCreate {
     provider: "demo" | "aws" | "gcp" | "azure";
     account_id: string;
     account_name: string;
+    business_unit?: string;
+    environment?: string;
+    cost_center?: string;
     credentials?: Record<string, unknown>;
+}
+
+export interface CloudAccountDetectResult {
+    provider: string;
+    account_id: string;
+    account_name: string;
+    confidence: string;
+    note: string;
+    detected_metadata: Record<string, string>;
+}
+
+export interface CloudAccountStatus {
+    account_id: string;
+    is_active: boolean;
+    last_sync_at?: string | null;
+    last_sync_status: string;
+    last_sync_error?: string | null;
+    last_sync_started_at?: string | null;
+    last_sync_completed_at?: string | null;
+    last_sync_records_imported?: number | null;
+    total_records: number;
+    coverage_start?: string | null;
+    coverage_end?: string | null;
+    services_detected: number;
+    currency?: string | null;
 }
 
 export interface RuntimeProviderStatus {
@@ -126,11 +172,101 @@ export interface RuntimeStatus {
     environment: string;
     cloud_sync_mode: "demo" | "live" | string;
     allow_live_cloud_sync: boolean;
+    cost_data_retention_months: number;
     default_demo_provider: string;
     default_demo_scenario: string;
     llm_provider: string;
+    llm_enabled: boolean;
     llm_configured: boolean;
+    llm_ready: boolean;
+    llm_execution_mode: "external" | "local" | string;
+    llm_allow_external_inference: boolean;
+    llm_context_policy: string;
+    llm_notice: string;
     providers: Record<string, RuntimeProviderStatus>;
+}
+
+export interface CostSummaryResponse {
+    total_cost: string;
+    currency: string;
+    period_start: string;
+    period_end: string;
+    by_service: Record<string, string>;
+    by_region: Record<string, string>;
+    by_day: Array<{ date: string; amount: number }>;
+}
+
+export interface CostServiceBreakdown {
+    service: string;
+    total_cost: number;
+    record_count: number;
+}
+
+export interface CostRegionBreakdown {
+    region: string;
+    total_cost: number;
+}
+
+export interface CostReconciliation {
+    account_id: string;
+    account_name: string;
+    provider: string;
+    days: number;
+    last_sync_at?: string | null;
+    imported_total: string;
+    provider_total: string;
+    variance_amount: string;
+    variance_percent: string;
+    status: string;
+    provider_mode: string;
+}
+
+export interface ChatGrounding {
+    time_range: string;
+    days: number;
+    provider: string;
+    account_id: string;
+    account_name: string;
+    business_unit: string;
+    environment: string;
+    cost_center: string;
+    service: string;
+    region: string;
+    records_found: number;
+}
+
+export interface ChatAnalyzeResponse {
+    response: string;
+    conversation_id: string;
+    provider: string;
+    model: string;
+    grounding: ChatGrounding;
+}
+
+export interface NotificationChannel {
+    id: string;
+    organization_id: string;
+    channel_type: "slack" | "teams" | "webhook";
+    name: string;
+    events: string[];
+    is_active: boolean;
+    created_at: string;
+    updated_at: string | null;
+}
+
+export interface NotificationChannelCreate {
+    channel_type: "slack" | "teams" | "webhook";
+    name: string;
+    config: { webhook_url: string; [key: string]: unknown };
+    events: string[];
+    is_active?: boolean;
+}
+
+export interface NotificationChannelUpdate {
+    name?: string;
+    config?: { webhook_url: string; [key: string]: unknown };
+    events?: string[];
+    is_active?: boolean;
 }
 
 
@@ -175,20 +311,31 @@ export async function logout() {
 }
 
 // Cost Service API Functions
-export async function getCostSummary(days = 30) {
-    return safeCall<any>(costApi.get("/costs/summary", { params: { days } }));
+function buildCostParams(days: number, filters?: CostFilters) {
+    return {
+        days,
+        ...(filters || {}),
+    };
 }
 
-export async function getCostTrend(days = 30) {
-    return safeCall<any>(costApi.get("/costs/trend", { params: { days } }));
+export async function getCostSummary(days = 30, filters?: CostFilters) {
+    return safeCall<CostSummaryResponse>(costApi.get("/costs/summary", { params: buildCostParams(days, filters) }));
 }
 
-export async function getCostsByService(days = 30) {
-    return safeCall<any>(costApi.get("/costs/by-service", { params: { days } }));
+export async function getCostTrend(days = 30, filters?: CostFilters) {
+    return safeCall<any>(costApi.get("/costs/trend", { params: buildCostParams(days, filters) }));
 }
 
-export async function getCostsByRegion(days = 30) {
-    return safeCall<any>(costApi.get("/costs/by-region", { params: { days } }));
+export async function getCostsByService(days = 30, filters?: CostFilters) {
+    return safeCall<CostServiceBreakdown[]>(costApi.get("/costs/by-service", { params: buildCostParams(days, filters) }));
+}
+
+export async function getCostsByRegion(days = 30, filters?: CostFilters) {
+    return safeCall<CostRegionBreakdown[]>(costApi.get("/costs/by-region", { params: buildCostParams(days, filters) }));
+}
+
+export async function getCostReconciliation(accountId: string, days = 30) {
+    return safeCall<CostReconciliation>(costApi.get("/costs/reconciliation", { params: { account_id: accountId, days } }));
 }
 
 export async function getCloudAccounts() {
@@ -205,6 +352,16 @@ export async function getProviderPreflight(provider: string) {
 
 export async function addCloudAccount(data: CloudAccountCreate) {
     return safeCall<CloudAccount>(costApi.post("/accounts/", data));
+}
+
+export async function detectCloudAccount(provider: CloudAccountCreate["provider"], credentials?: Record<string, unknown>) {
+    return safeCall<CloudAccountDetectResult>(
+        costApi.post("/accounts/detect", { provider, credentials: credentials || {} })
+    );
+}
+
+export async function getCloudAccountStatus(id: string) {
+    return safeCall<CloudAccountStatus>(costApi.get(`/accounts/${id}/status`));
 }
 
 export async function deleteCloudAccount(id: string) {
@@ -233,11 +390,104 @@ export async function getModelStatus() {
 }
 
 // Chat / AI Analyst
-export async function chatAnalyze(request: { message: string; conversation_id?: string }) {
-    return safeCall<any>(costApi.post("/chat/analyze", request));
+export async function chatAnalyze(request: { message: string; conversation_id?: string; context_keys?: Record<string, string>; time_range?: string }) {
+    return safeCall<ChatAnalyzeResponse>(costApi.post("/chat/analyze", request));
 }
 
 // Kubernetes
-export async function getNamespaceCosts() {
-    return safeCall<any>(costApi.get("/kubernetes/namespaces/cost"));
+export async function getNamespaceCosts(window = "24h") {
+    return safeCall<any>(costApi.get("/kubernetes/namespaces/cost", { params: { window } }));
+}
+
+export async function getPodCosts(namespace: string, window = "24h") {
+    return safeCall<any>(costApi.get(`/kubernetes/namespaces/${encodeURIComponent(namespace)}/pods`, { params: { window } }));
+}
+
+export async function getNamespaceTrend(days = 7) {
+    return safeCall<any>(costApi.get("/kubernetes/namespaces/trend", { params: { days } }));
+}
+
+export async function getLabelCosts(label = "app", window = "24h") {
+    return safeCall<any>(costApi.get("/kubernetes/namespaces/labels", { params: { label, window } }));
+}
+
+// Notifications
+export async function getNotificationChannels() {
+    return safeCall<NotificationChannel[]>(costApi.get("/notifications/channels"));
+}
+
+export async function createNotificationChannel(data: NotificationChannelCreate) {
+    return safeCall<NotificationChannel>(costApi.post("/notifications/channels", data));
+}
+
+export async function updateNotificationChannel(id: string, data: NotificationChannelUpdate) {
+    return safeCall<NotificationChannel>(costApi.patch(`/notifications/channels/${id}`, data));
+}
+
+export async function deleteNotificationChannel(id: string) {
+    return safeCall<void>(costApi.delete(`/notifications/channels/${id}`));
+}
+
+export async function testNotificationChannel(id: string) {
+    return safeCall<{ success: boolean; message: string }>(costApi.post(`/notifications/channels/${id}/test`));
+}
+
+// === Terraform Estimation ===
+
+export interface TerraformResourceEstimate {
+    address: string;
+    type: string;
+    name: string;
+    action: string;
+    monthly_cost: number | null;
+    previous_cost: number | null;
+}
+
+export interface TerraformEstimateSummary {
+    total_resources: number;
+    estimated_monthly_increase: number;
+    estimated_monthly_decrease: number;
+    net_monthly_delta: number;
+    unsupported_count: number;
+}
+
+export interface TerraformEstimateResult {
+    resources: TerraformResourceEstimate[];
+    summary: TerraformEstimateSummary;
+    unsupported_resources: string[];
+}
+
+export interface TerraformSupportedResource {
+    type: string;
+    provider: string;
+    description: string;
+    has_size_rates: boolean;
+}
+
+export async function estimateTerraformPlan(planJson: Record<string, unknown>) {
+    return safeCall<TerraformEstimateResult>(costApi.post("/terraform/estimate", { plan_json: planJson }));
+}
+
+export async function getSupportedTerraformResources() {
+    return safeCall<TerraformSupportedResource[]>(costApi.get("/terraform/supported-resources"));
+}
+
+export async function downloadCostExport(days = 30, filters?: CostFilters): Promise<void> {
+    const response = await costApi.get("/costs/export", {
+        params: buildCostParams(days, filters),
+        responseType: "blob",
+    });
+
+    const blob = new Blob([response.data], { type: response.headers["content-type"] || "text/csv" });
+    const disposition = response.headers["content-disposition"] as string | undefined;
+    const filenameMatch = disposition?.match(/filename="?([^"]+)"?/i);
+    const filename = filenameMatch?.[1] || `cloudpulse-costs-${days}d.csv`;
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(url);
 }

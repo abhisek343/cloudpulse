@@ -10,7 +10,8 @@ import {
     CloudCog,
     Settings,
     CreditCard,
-    Server
+    Server,
+    FileCode2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +19,7 @@ const navigation = [
     { name: "Dashboard", href: "/", icon: LayoutDashboard },
     { name: "Cost Analysis", href: "/costs", icon: CreditCard },
     { name: "Kubernetes", href: "/kubernetes", icon: Server },
+    { name: "Terraform", href: "/terraform", icon: FileCode2 },
     { name: "Predictions", href: "/predictions", icon: TrendingUp },
     { name: "Anomalies", href: "/anomalies", icon: AlertTriangle },
     { name: "Cloud Accounts", href: "/accounts", icon: Cloud },

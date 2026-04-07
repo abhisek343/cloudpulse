@@ -28,12 +28,10 @@ const CustomContent = ({ x = 0, y = 0, width = 0, height = 0, index = 0, name = 
                 y={y}
                 width={width}
                 height={height}
-                style={{
-                    fill: colors[index % colors.length],
-                    stroke: "#1f2937",
-                    strokeWidth: 2,
-                    strokeOpacity: 1,
-                }}
+                fill={colors[index % colors.length]}
+                stroke="#1f2937"
+                strokeWidth={2}
+                strokeOpacity={1}
             />
             {width > 50 && height > 30 && (
                 <text

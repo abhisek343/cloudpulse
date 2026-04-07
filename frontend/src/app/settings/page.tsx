@@ -1,21 +1,36 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { Bell, Bot, CheckCircle2, Cloud, Database, Loader2, Palette, PlayCircle, Save, Shield, TriangleAlert } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Bell, Bot, CheckCircle2, Cloud, Database, Loader2, Palette, PlayCircle, Plus, Save, Shield, Trash2, TriangleAlert, Zap } from "lucide-react";
 import { ChartCard } from "@/components/ui/card";
-import { getProviderPreflight, getRuntimeStatus, ProviderPreflightResult } from "@/lib/api";
+import {
+    getProviderPreflight,
+    getRuntimeStatus,
+    getNotificationChannels,
+    createNotificationChannel,
+    deleteNotificationChannel,
+    testNotificationChannel,
+    ProviderPreflightResult,
+    NotificationChannel,
+    NotificationChannelCreate,
+} from "@/lib/api";
 
 export default function SettingsPage() {
     const [preflightResults, setPreflightResults] = useState<Record<string, ProviderPreflightResult | null>>({});
     const [preflightErrors, setPreflightErrors] = useState<Record<string, string | null>>({});
-    const [notifications, setNotifications] = useState({
-        email: true,
-        slack: false,
-        anomalyAlerts: true,
-        budgetAlerts: true,
-        weeklyReport: true,
+
+    // Notification channel form
+    const [showChannelForm, setShowChannelForm] = useState(false);
+    const [channelForm, setChannelForm] = useState<NotificationChannelCreate>({
+        channel_type: "slack",
+        name: "",
+        config: { webhook_url: "" },
+        events: ["anomaly", "budget"],
     });
+    const [testingChannelId, setTestingChannelId] = useState<string | null>(null);
+
+    const queryClient = useQueryClient();
 
     const [anomalySettings, setAnomalySettings] = useState({
         sensitivity: "medium",
@@ -28,6 +43,34 @@ export default function SettingsPage() {
     });
     const runtime = runtimeResult?.data;
     const runtimeError = runtimeResult && !runtimeResult.success ? runtimeResult.error : null;
+
+    const { data: channelsResult, isLoading: isChannelsLoading } = useQuery({
+        queryKey: ["notificationChannels"],
+        queryFn: getNotificationChannels,
+    });
+    const channels: NotificationChannel[] = channelsResult?.data || [];
+
+    const createChannelMutation = useMutation({
+        mutationFn: (data: NotificationChannelCreate) => createNotificationChannel(data),
+        onSuccess: (result) => {
+            if (result.success) {
+                queryClient.invalidateQueries({ queryKey: ["notificationChannels"] });
+                setShowChannelForm(false);
+                setChannelForm({ channel_type: "slack", name: "", config: { webhook_url: "" }, events: ["anomaly", "budget"] });
+            }
+        },
+    });
+
+    const deleteChannelMutation = useMutation({
+        mutationFn: (id: string) => deleteNotificationChannel(id),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notificationChannels"] }),
+    });
+
+    const testChannelMutation = useMutation({
+        mutationFn: (id: string) => testNotificationChannel(id),
+        onSuccess: () => setTestingChannelId(null),
+    });
+
     const preflightMutation = useMutation({
         mutationFn: (provider: string) => getProviderPreflight(provider),
         onSuccess: (result, provider) => {
@@ -90,6 +133,18 @@ export default function SettingsPage() {
                                             {runtime.allow_live_cloud_sync
                                                 ? "Real provider sync is enabled."
                                                 : "Real provider sync is disabled until you opt in via env."}
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+                                <div className="flex items-center gap-3">
+                                    <Database className="h-5 w-5 text-emerald-300" />
+                                    <div>
+                                        <p className="font-medium text-white">Data Retention</p>
+                                        <p className="text-sm text-slate-400">
+                                            CloudPulse currently keeps {runtime.cost_data_retention_months} months of imported cost history.
                                         </p>
                                     </div>
                                 </div>
@@ -178,102 +233,154 @@ export default function SettingsPage() {
                                     <div>
                                         <p className="font-medium text-white">LLM Provider</p>
                                         <p className="text-sm text-slate-400">
-                                            {runtime.llm_provider} ·{" "}
-                                            {runtime.llm_configured ? "configured" : "missing API key"}
+                                            {runtime.llm_provider} · {runtime.llm_execution_mode} ·{" "}
+                                            {runtime.llm_ready ? "ready" : "not ready"}
                                         </p>
                                     </div>
+                                </div>
+                                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                                    <div className="rounded-lg border border-slate-800 bg-slate-900/80 p-3">
+                                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                                            Runtime Policy
+                                        </p>
+                                        <p className="mt-2 text-sm text-slate-200">
+                                            {runtime.llm_enabled ? "AI analysis enabled" : "AI analysis disabled"}
+                                        </p>
+                                        <p className="mt-1 text-xs text-slate-400">
+                                            context: {runtime.llm_context_policy}
+                                        </p>
+                                    </div>
+                                    <div className="rounded-lg border border-slate-800 bg-slate-900/80 p-3">
+                                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                                            Provider Access
+                                        </p>
+                                        <p className="mt-2 text-sm text-slate-200">
+                                            {runtime.llm_execution_mode === "local"
+                                                ? "Local inference path"
+                                                : runtime.llm_allow_external_inference
+                                                    ? "Hosted inference allowed"
+                                                    : "Hosted inference blocked"}
+                                        </p>
+                                        <p className="mt-1 text-xs text-slate-400">
+                                            {runtime.llm_configured ? "credentials present" : "credentials missing"}
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="mt-4 rounded-lg border border-slate-800 bg-slate-900/80 p-3 text-sm text-slate-300">
+                                    {runtime.llm_notice}
                                 </div>
                             </div>
                         </div>
                     ) : null}
                 </ChartCard>
 
-                {/* Notification Settings */}
-                <ChartCard title="Notifications">
+                {/* Notification Channels */}
+                <ChartCard title="Notification Channels">
                     <div className="space-y-4">
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                                <Bell className="h-5 w-5 text-gray-400" />
-                                <div>
-                                    <p className="font-medium text-white">Email Notifications</p>
-                                    <p className="text-sm text-gray-400">Receive alerts via email</p>
-                                </div>
+                        {isChannelsLoading ? (
+                            <div className="flex items-center gap-2 text-sm text-slate-400">
+                                <Loader2 className="h-4 w-4 animate-spin" /> Loading channels...
                             </div>
-                            <button
-                                onClick={() => setNotifications({ ...notifications, email: !notifications.email })}
-                                className={`relative h-6 w-11 rounded-full transition-colors ${notifications.email ? "bg-blue-500" : "bg-gray-600"
-                                    }`}
-                            >
-                                <span
-                                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${notifications.email ? "translate-x-5" : "translate-x-0.5"
-                                        }`}
-                                />
-                            </button>
-                        </div>
+                        ) : channels.length === 0 && !showChannelForm ? (
+                            <p className="text-sm text-gray-500">No notification channels configured yet.</p>
+                        ) : (
+                            channels.map((ch) => (
+                                <div key={ch.id} className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                                    <div className="flex items-center gap-3">
+                                        <Bell className="h-5 w-5 text-gray-400" />
+                                        <div>
+                                            <p className="font-medium text-white">{ch.name}</p>
+                                            <p className="text-xs text-gray-500">
+                                                {ch.channel_type.toUpperCase()} · {ch.events.join(", ")}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={() => { setTestingChannelId(ch.id); testChannelMutation.mutate(ch.id); }}
+                                            disabled={testChannelMutation.isPending && testingChannelId === ch.id}
+                                            className="rounded-lg bg-blue-600/20 px-3 py-1 text-xs text-blue-300 hover:bg-blue-600/30 transition-colors disabled:opacity-50"
+                                        >
+                                            {testChannelMutation.isPending && testingChannelId === ch.id ? "Sending..." : "Test"}
+                                        </button>
+                                        <button
+                                            onClick={() => deleteChannelMutation.mutate(ch.id)}
+                                            className="rounded-lg p-1.5 text-gray-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                                        >
+                                            <Trash2 className="h-4 w-4" />
+                                        </button>
+                                    </div>
+                                </div>
+                            ))
+                        )}
 
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                                <Bell className="h-5 w-5 text-gray-400" />
-                                <div>
-                                    <p className="font-medium text-white">Slack Notifications</p>
-                                    <p className="text-sm text-gray-400">Send alerts to Slack channel</p>
+                        {showChannelForm && (
+                            <div className="space-y-3 rounded-lg border border-slate-700 bg-slate-800/50 p-4">
+                                <select
+                                    value={channelForm.channel_type}
+                                    onChange={(e) => setChannelForm({ ...channelForm, channel_type: e.target.value as NotificationChannelCreate["channel_type"] })}
+                                    className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+                                >
+                                    <option value="slack">Slack</option>
+                                    <option value="teams">Microsoft Teams</option>
+                                    <option value="webhook">Generic Webhook</option>
+                                </select>
+                                <input
+                                    placeholder="Channel name"
+                                    value={channelForm.name}
+                                    onChange={(e) => setChannelForm({ ...channelForm, name: e.target.value })}
+                                    className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                                />
+                                <input
+                                    placeholder="Webhook URL"
+                                    value={channelForm.config.webhook_url}
+                                    onChange={(e) => setChannelForm({ ...channelForm, config: { webhook_url: e.target.value } })}
+                                    className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                                />
+                                <div className="flex flex-wrap gap-2">
+                                    {["anomaly", "budget", "sync_failure", "weekly_report"].map((evt) => (
+                                        <label key={evt} className="flex items-center gap-1.5 text-xs text-gray-300">
+                                            <input
+                                                type="checkbox"
+                                                checked={channelForm.events.includes(evt)}
+                                                onChange={(e) => {
+                                                    const events = e.target.checked
+                                                        ? [...channelForm.events, evt]
+                                                        : channelForm.events.filter((x) => x !== evt);
+                                                    setChannelForm({ ...channelForm, events });
+                                                }}
+                                                className="rounded border-slate-600"
+                                            />
+                                            {evt.replace("_", " ")}
+                                        </label>
+                                    ))}
+                                </div>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={() => createChannelMutation.mutate(channelForm)}
+                                        disabled={!channelForm.name || !channelForm.config.webhook_url || createChannelMutation.isPending}
+                                        className="rounded-lg bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
+                                    >
+                                        {createChannelMutation.isPending ? "Creating..." : "Create"}
+                                    </button>
+                                    <button
+                                        onClick={() => setShowChannelForm(false)}
+                                        className="rounded-lg bg-slate-700 px-4 py-1.5 text-sm text-gray-300 hover:bg-slate-600 transition-colors"
+                                    >
+                                        Cancel
+                                    </button>
                                 </div>
                             </div>
-                            <button
-                                onClick={() => setNotifications({ ...notifications, slack: !notifications.slack })}
-                                className={`relative h-6 w-11 rounded-full transition-colors ${notifications.slack ? "bg-blue-500" : "bg-gray-600"
-                                    }`}
-                            >
-                                <span
-                                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${notifications.slack ? "translate-x-5" : "translate-x-0.5"
-                                        }`}
-                                />
-                            </button>
-                        </div>
+                        )}
 
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                                <Bell className="h-5 w-5 text-gray-400" />
-                                <div>
-                                    <p className="font-medium text-white">Anomaly Alerts</p>
-                                    <p className="text-sm text-gray-400">Get notified of cost anomalies</p>
-                                </div>
-                            </div>
+                        {!showChannelForm && (
                             <button
-                                onClick={() =>
-                                    setNotifications({ ...notifications, anomalyAlerts: !notifications.anomalyAlerts })
-                                }
-                                className={`relative h-6 w-11 rounded-full transition-colors ${notifications.anomalyAlerts ? "bg-blue-500" : "bg-gray-600"
-                                    }`}
+                                onClick={() => setShowChannelForm(true)}
+                                className="flex items-center gap-2 rounded-lg bg-slate-800 px-4 py-2 text-sm text-gray-300 hover:bg-slate-700 transition-colors"
                             >
-                                <span
-                                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${notifications.anomalyAlerts ? "translate-x-5" : "translate-x-0.5"
-                                        }`}
-                                />
+                                <Plus className="h-4 w-4" /> Add Channel
                             </button>
-                        </div>
-
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                                <Bell className="h-5 w-5 text-gray-400" />
-                                <div>
-                                    <p className="font-medium text-white">Weekly Report</p>
-                                    <p className="text-sm text-gray-400">Receive weekly cost summary</p>
-                                </div>
-                            </div>
-                            <button
-                                onClick={() =>
-                                    setNotifications({ ...notifications, weeklyReport: !notifications.weeklyReport })
-                                }
-                                className={`relative h-6 w-11 rounded-full transition-colors ${notifications.weeklyReport ? "bg-blue-500" : "bg-gray-600"
-                                    }`}
-                            >
-                                <span
-                                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${notifications.weeklyReport ? "translate-x-5" : "translate-x-0.5"
-                                        }`}
-                                />
-                            </button>
-                        </div>
+                        )}
                     </div>
                 </ChartCard>
 

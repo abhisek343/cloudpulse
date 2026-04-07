@@ -25,13 +25,13 @@ function buildServiceUrl(service: ServiceName, path: string, search: string): st
     return `${baseUrl}${path}${search}`;
 }
 
-async function getRequestBody(request: NextRequest): Promise<ArrayBuffer | undefined> {
+async function getRequestBody(request: NextRequest): Promise<string | undefined> {
     if (request.method === "GET" || request.method === "HEAD") {
         return undefined;
     }
 
-    const body = await request.arrayBuffer();
-    return body.byteLength > 0 ? body : undefined;
+    const body = await request.text();
+    return body.length > 0 ? body : undefined;
 }
 
 function createForwardHeaders(request: NextRequest, accessToken?: string): Headers {
@@ -58,7 +58,7 @@ function createForwardHeaders(request: NextRequest, accessToken?: string): Heade
 async function forwardRequest(
     request: NextRequest,
     targetUrl: string,
-    body: ArrayBuffer | undefined,
+    body: string | undefined,
     accessToken?: string,
 ): Promise<Response> {
     return fetch(targetUrl, {
@@ -74,9 +74,15 @@ function createProxyResponse(response: Response): NextResponse {
         status: response.status,
     });
 
-    const contentType = response.headers.get("content-type");
-    if (contentType) {
-        proxiedResponse.headers.set("content-type", contentType);
+    for (const headerName of [
+        "content-type",
+        "content-disposition",
+        "cache-control",
+    ]) {
+        const headerValue = response.headers.get(headerName);
+        if (headerValue) {
+            proxiedResponse.headers.set(headerName, headerValue);
+        }
     }
 
     return proxiedResponse;

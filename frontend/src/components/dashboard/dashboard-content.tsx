@@ -38,6 +38,8 @@ type RegionCost = {
     total_cost: number;
 };
 
+const REGION_COLOR_CLASSES = ["bg-blue-500", "bg-violet-500", "bg-pink-500", "bg-orange-500"];
+
 export function DashboardContent() {
     // 1. Fetch Cost Summary
     const { data: summaryResult, isLoading: isSummaryLoading } = useQuery({
@@ -235,7 +237,7 @@ docker compose exec cost-service python /app/scripts/seed_data.py --reset`}</pre
             <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
                 <Card
                     title="Total Cost (MTD)"
-                    value={formatCurrency(summary.total_cost)}
+                    value={formatCurrency(Number(summary.total_cost))}
                     subtitle={
                         percentChange >= 0
                             ? `+${percentChange.toFixed(2)}% from last period`
@@ -293,10 +295,7 @@ docker compose exec cost-service python /app/scripts/seed_data.py --reset`}</pre
                             <div key={region.region} className="flex items-center justify-between text-sm">
                                 <div className="flex items-center gap-2">
                                     <div
-                                        className="h-3 w-3 rounded-full"
-                                        style={{
-                                            backgroundColor: ["#3b82f6", "#8b5cf6", "#ec4899", "#f97316"][index % 4],
-                                        }}
+                                        className={`h-3 w-3 rounded-full ${REGION_COLOR_CLASSES[index % REGION_COLOR_CLASSES.length]}`}
                                     />
                                     <span className="text-gray-400">{region.region}</span>
                                 </div>

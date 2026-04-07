@@ -5,7 +5,7 @@ import { validateTrustedRequest } from "@/lib/server/security";
 
 export const dynamic = "force-dynamic";
 
-const ALLOWED_COST_PREFIXES = ["costs", "accounts", "health", "chat", "kubernetes"];
+const ALLOWED_COST_PREFIXES = ["costs", "accounts", "health", "chat", "kubernetes", "notifications", "terraform"];
 
 type RouteContext = {
     params: Promise<{

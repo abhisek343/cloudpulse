@@ -10,6 +10,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import RedisCache
+from app.core.circuit_breaker import CircuitOpenError, get_breaker
+from app.core.logging import sanitize_error
 from app.core.observability import SYNC_DURATION
 from app.core.security import decrypt_credentials
 from app.models import CloudAccount, CostRecord
@@ -44,9 +46,17 @@ class CostSyncService:
             Sync result with record counts
         """
         started_at = time.perf_counter()
+        sync_started_at = datetime.now(UTC)
         raw_credentials = cloud_account.credentials or {}
         credentials = decrypt_credentials(raw_credentials)
         mode = str(credentials.get("mode", "live"))
+
+        cloud_account.last_sync_status = "syncing"
+        cloud_account.last_sync_started_at = sync_started_at
+        cloud_account.last_sync_completed_at = None
+        cloud_account.last_sync_error = None
+        cloud_account.last_sync_records_imported = None
+        await self.db.flush()
 
         try:
             provider = ProviderFactory.get_provider(
@@ -59,22 +69,67 @@ class CostSyncService:
                 mode=mode,
                 status="rejected",
             ).observe(time.perf_counter() - started_at)
+            cloud_account.last_sync_status = "error"
+            cloud_account.last_sync_error = sanitize_error(exc)
+            cloud_account.last_sync_completed_at = datetime.now(UTC)
+            await self.db.flush()
             return {
                 "account_id": cloud_account.id,
-                "error": str(exc),
+                "error": sanitize_error(exc),
                 "records_created": 0,
                 "records_updated": 0,
             }
 
         # Calculate date range
         end_date = datetime.now(UTC)
-        start_date = end_date - timedelta(days=days)
-        
-        parsed_records = await provider.get_cost_data(
-            start_date=start_date,
-            end_date=end_date,
-            granularity="DAILY",
+        start_date = (end_date - timedelta(days=days - 1)).replace(
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
         )
+
+        breaker = get_breaker(cloud_account.provider)
+        try:
+            breaker.ensure_closed()
+        except CircuitOpenError as exc:
+            cloud_account.last_sync_status = "error"
+            cloud_account.last_sync_error = sanitize_error(exc)
+            cloud_account.last_sync_completed_at = datetime.now(UTC)
+            await self.db.flush()
+            return {
+                "account_id": cloud_account.id,
+                "error": sanitize_error(exc),
+                "records_created": 0,
+                "records_updated": 0,
+            }
+
+        try:
+            parsed_records = await provider.get_cost_data(
+                start_date=start_date,
+                end_date=end_date,
+                granularity="DAILY",
+            )
+            breaker.record_success()
+        except Exception as exc:
+            breaker.record_failure(exc)
+            metric_mode = getattr(provider, "mode", mode)
+            SYNC_DURATION.labels(
+                provider=cloud_account.provider,
+                mode=metric_mode,
+                status="error",
+            ).observe(time.perf_counter() - started_at)
+            cloud_account.last_sync_status = "error"
+            cloud_account.last_sync_error = sanitize_error(exc)
+            cloud_account.last_sync_completed_at = datetime.now(UTC)
+            cloud_account.last_sync_records_imported = 0
+            await self.db.flush()
+            return {
+                "account_id": cloud_account.id,
+                "error": sanitize_error(exc),
+                "records_created": 0,
+                "records_updated": 0,
+            }
         
         if not parsed_records:
             SYNC_DURATION.labels(
@@ -82,6 +137,13 @@ class CostSyncService:
                 mode=getattr(provider, "mode", mode),
                 status="empty",
             ).observe(time.perf_counter() - started_at)
+            finished_at = datetime.now(UTC)
+            cloud_account.last_sync_at = finished_at
+            cloud_account.last_sync_status = "ready"
+            cloud_account.last_sync_completed_at = finished_at
+            cloud_account.last_sync_error = None
+            cloud_account.last_sync_records_imported = 0
+            await self.db.flush()
             return {
                 "account_id": cloud_account.id,
                 "records_created": 0,
@@ -93,34 +155,41 @@ class CostSyncService:
                 },
             }
 
-        await self.db.execute(
-            delete(CostRecord).where(
-                CostRecord.cloud_account_id == cloud_account.id,
-                CostRecord.date >= start_date,
-                CostRecord.date <= end_date,
-                CostRecord.granularity == "daily",
+        # Atomic delete + insert within an explicit transaction
+        async with self.db.begin_nested():
+            await self.db.execute(
+                delete(CostRecord).where(
+                    CostRecord.cloud_account_id == cloud_account.id,
+                    CostRecord.date >= start_date,
+                    CostRecord.date <= end_date,
+                    CostRecord.granularity == "daily",
+                )
             )
-        )
 
-        records_to_insert = [
-            CostRecord(
-                cloud_account_id=cloud_account.id,
-                date=record_data["date"],
-                granularity="daily",
-                service=record_data["service"],
-                region=record_data.get("region"),
-                resource_id=record_data.get("resource_id"),
-                amount=record_data["amount"],
-                currency=record_data.get("currency", "USD"),
-                tags=record_data.get("tags"),
-                record_metadata=record_data.get("record_metadata"),
-            )
-            for record_data in parsed_records
-        ]
+            records_to_insert = [
+                CostRecord(
+                    cloud_account_id=cloud_account.id,
+                    date=record_data["date"],
+                    granularity="daily",
+                    service=record_data["service"],
+                    region=record_data.get("region"),
+                    resource_id=record_data.get("resource_id"),
+                    amount=record_data["amount"],
+                    currency=record_data.get("currency", "USD"),
+                    tags=record_data.get("tags"),
+                    record_metadata=record_data.get("record_metadata"),
+                )
+                for record_data in parsed_records
+            ]
 
-        self.db.add_all(records_to_insert)
+            self.db.add_all(records_to_insert)
         
-        cloud_account.last_sync_at = datetime.now(UTC)
+        finished_at = datetime.now(UTC)
+        cloud_account.last_sync_at = finished_at
+        cloud_account.last_sync_status = "ready"
+        cloud_account.last_sync_completed_at = finished_at
+        cloud_account.last_sync_error = None
+        cloud_account.last_sync_records_imported = len(records_to_insert)
         await self.db.flush()
         
         await self.cache.flush_pattern(
@@ -209,6 +278,15 @@ class CostSyncService:
         return {
             "account_id": cloud_account_id,
             "last_sync_at": account.last_sync_at.isoformat() if account.last_sync_at else None,
+            "last_sync_status": account.last_sync_status,
+            "last_sync_error": account.last_sync_error,
+            "last_sync_started_at": (
+                account.last_sync_started_at.isoformat() if account.last_sync_started_at else None
+            ),
+            "last_sync_completed_at": (
+                account.last_sync_completed_at.isoformat() if account.last_sync_completed_at else None
+            ),
+            "last_sync_records_imported": account.last_sync_records_imported,
             "total_records": record_count or 0,
             "is_active": account.is_active,
         }

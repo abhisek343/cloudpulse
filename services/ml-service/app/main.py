@@ -2,6 +2,8 @@
 CloudPulse AI - ML Service
 FastAPI application entry point.
 """
+import logging
+import signal
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -13,17 +15,28 @@ from app.core.config import get_settings
 from app.core.observability import ObservabilityMiddleware, metrics_response
 from app.core.tracing import setup_tracing
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Application lifespan handler."""
-    # Startup - nothing to initialize for ML service
+    """Application lifespan handler with graceful shutdown."""
+    import asyncio
+    loop = asyncio.get_running_loop()
+
+    def _signal_handler(sig: int) -> None:
+        logger.info("ML service received %s, shutting down…", signal.Signals(sig).name)
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, _signal_handler, sig)
+
     flush_traces = setup_tracing(app)
+    logger.info("ML service started (pid=%d)", __import__("os").getpid())
     yield
-    # Shutdown
+    logger.info("Shutting down ML service: flushing traces…")
     flush_traces()
+    logger.info("ML service shutdown complete.")
 
 
 def create_app() -> FastAPI:

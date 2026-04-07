@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.cache import RedisCache, get_cache
+from app.core.circuit_breaker import breaker_status
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.schemas import (
@@ -24,6 +25,7 @@ from app.schemas import (
 from app.services.providers.aws import AWSCostProvider
 from app.services.providers.azure import AzureProvider
 from app.services.providers.gcp import GCPProvider
+from app.services.llm_service import is_external_llm_provider
 
 router = APIRouter()
 settings = get_settings()
@@ -150,6 +152,40 @@ def _build_provider_statuses() -> dict[str, RuntimeProviderStatus]:
     }
 
 
+def _llm_execution_mode() -> str:
+    """Classify the current LLM provider as local or externally hosted."""
+    return "external" if is_external_llm_provider(settings.llm_provider) else "local"
+
+
+def _llm_ready() -> bool:
+    """Return whether chat can run under the current runtime policy."""
+    if not settings.llm_enabled:
+        return False
+
+    if _llm_execution_mode() == "external" and not settings.llm_allow_external_inference:
+        return False
+
+    if settings.llm_provider == "ollama":
+        return True
+
+    return bool(settings.llm_api_key)
+
+
+def _llm_notice() -> str:
+    """Provide an operator-facing summary of how chat prompts are handled."""
+    if not settings.llm_enabled:
+        return "AI analysis is disabled by runtime policy."
+
+    if _llm_execution_mode() == "external":
+        if not settings.llm_allow_external_inference:
+            return "AI analysis is blocked because external inference is disabled."
+        return (
+            "CloudPulse sends summarized tenant cost context to the configured hosted LLM provider."
+        )
+
+    return "CloudPulse keeps AI analysis on the configured local provider."
+
+
 @router.get("/", response_model=HealthCheck)
 async def health_check(
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -178,6 +214,7 @@ async def health_check(
         database=db_status,
         redis=redis_status,
         timestamp=datetime.now(UTC),
+        circuit_breakers=breaker_status(),
     )
 
 
@@ -200,10 +237,17 @@ async def runtime_status() -> RuntimeStatus:
         environment=settings.environment,
         cloud_sync_mode=settings.cloud_sync_mode,
         allow_live_cloud_sync=settings.allow_live_cloud_sync,
+        cost_data_retention_months=settings.cost_data_retention_months,
         default_demo_provider=settings.default_demo_provider,
         default_demo_scenario=settings.default_demo_scenario,
         llm_provider=settings.llm_provider,
+        llm_enabled=settings.llm_enabled,
         llm_configured=bool(settings.llm_api_key),
+        llm_ready=_llm_ready(),
+        llm_execution_mode=_llm_execution_mode(),
+        llm_allow_external_inference=settings.llm_allow_external_inference,
+        llm_context_policy=settings.llm_context_policy,
+        llm_notice=_llm_notice(),
         providers=_build_provider_statuses(),
     )
 

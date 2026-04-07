@@ -397,11 +397,12 @@ pytest -q
 - [x] Amazon Chronos for forecasting
 - [x] Anomaly detection with Isolation Forest
 - [x] Natural language chat interface
-- [ ] Azure Cost Management integration
-- [ ] GCP Billing integration
-- [ ] Kubernetes namespace cost attribution
-- [ ] Slack/Teams alerting
-- [ ] Terraform cost estimation (pre-deploy)
+- [x] Azure Cost Management integration (live sync, preflight validation)
+- [x] GCP Billing integration via BigQuery export (live sync, preflight validation)
+- [x] Multi-turn chat with conversation memory
+- [x] Kubernetes namespace cost attribution
+- [x] Slack/Teams alerting
+- [x] Terraform cost estimation (pre-deploy)
 
 ---
 
@@ -410,10 +411,10 @@ pytest -q
 Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 **Good first issues:**
-- Add Azure provider adapter
-- Add GCP provider adapter
 - Improve anomaly detection sensitivity tuning
 - Add more chart visualizations
+- Add custom cost allocation tag support
+- Add cost optimization recommendations
 
 ---
 

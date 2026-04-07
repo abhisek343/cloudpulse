@@ -59,7 +59,14 @@ class RedisCache:
     async def delete(self, key: str) -> None:
         """Delete key from cache."""
         await self.client.delete(key)
-    
+
+    async def increment(self, key: str, ttl: int) -> int:
+        """Increment a counter and apply a TTL on first use."""
+        count = int(await self.client.incr(key))
+        if count == 1:
+            await self.client.expire(key, ttl)
+        return count
+
     async def exists(self, key: str) -> bool:
         """Check if key exists."""
         return bool(await self.client.exists(key))

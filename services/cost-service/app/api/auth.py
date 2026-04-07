@@ -11,20 +11,24 @@ from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.cache import RedisCache, get_cache
 from app.core.config import get_settings
 from app.core.rate_limit import auth_rate_limit
 
 settings = get_settings()
 from app.core.database import get_db
 from app.core.security import (
+    decode_token,
     create_access_token,
     create_refresh_token,
     generate_csrf_token,
+    get_token_ttl_seconds,
     get_password_hash,
     verify_password,
 )
 from app.models import Organization, User
 from app.schemas.auth import (
+    LogoutRequest,
     RefreshTokenRequest,
     Token,
     TokenPayload,
@@ -67,9 +71,50 @@ def _clear_refresh_cookies(response: Response) -> None:
     response.delete_cookie(settings.csrf_cookie_name, path=f"{settings.api_prefix}/auth")
 
 
+def _get_revocation_cache_key(cache: RedisCache, jti: str) -> str:
+    return cache.generate_key("auth", "revoked", jti)
+
+
+async def _is_token_revoked(token_data: TokenPayload, cache: RedisCache) -> bool:
+    if not token_data.jti:
+        return False
+    return await cache.exists(_get_revocation_cache_key(cache, token_data.jti))
+
+
+async def _revoke_token(token: str | None, cache: RedisCache) -> TokenPayload | None:
+    if not token:
+        return None
+
+    try:
+        payload = decode_token(token)
+    except JWTError:
+        return None
+
+    token_data = TokenPayload(
+        sub=payload.get("sub"),
+        type=payload.get("type"),
+        csrf=payload.get("csrf"),
+        jti=payload.get("jti"),
+        exp=payload.get("exp"),
+    )
+    if not token_data.jti:
+        return token_data
+
+    ttl_seconds = get_token_ttl_seconds(payload)
+    if ttl_seconds > 0:
+        await cache.set(
+            _get_revocation_cache_key(cache, token_data.jti),
+            {"revoked": True},
+            ttl=ttl_seconds,
+        )
+
+    return token_data
+
+
 async def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
     db: AsyncSession = Depends(get_db),
+    cache: RedisCache = Depends(get_cache),
 ) -> User:
     """Dependency to get the current authenticated user."""
     credentials_exception = HTTPException(
@@ -78,17 +123,24 @@ async def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(
-            token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm]
-        )
+        payload = decode_token(token)
         user_id: str = payload.get("sub")
         if user_id is None:
             raise credentials_exception
-        token_data = TokenPayload(sub=user_id, type=payload.get("type"), csrf=payload.get("csrf"))
+        token_data = TokenPayload(
+            sub=user_id,
+            type=payload.get("type"),
+            csrf=payload.get("csrf"),
+            jti=payload.get("jti"),
+            exp=payload.get("exp"),
+        )
     except JWTError:
         raise credentials_exception
 
     if token_data.type not in {None, "access"}:
+        raise credentials_exception
+
+    if await _is_token_revoked(token_data, cache):
         raise credentials_exception
     
     result = await db.execute(select(User).where(User.id == token_data.sub))
@@ -212,7 +264,9 @@ async def refresh_access_token(
     csrf_header: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
     refresh_cookie: Annotated[str | None, Cookie(alias=settings.refresh_cookie_name)] = None,
     csrf_cookie: Annotated[str | None, Cookie(alias=settings.csrf_cookie_name)] = None,
+    _: None = Depends(auth_rate_limit("refresh")),
     db: AsyncSession = Depends(get_db),
+    cache: RedisCache = Depends(get_cache),
 ) -> dict:
     """Exchange a refresh token for a fresh access token."""
     use_cookie_refresh = payload.refresh_token is None and refresh_cookie is not None
@@ -225,11 +279,7 @@ async def refresh_access_token(
             raise HTTPException(status_code=403, detail="CSRF validation failed")
 
     try:
-        decoded = jwt.decode(
-            refresh_token,
-            settings.jwt_secret_key,
-            algorithms=[settings.jwt_algorithm],
-        )
+        decoded = decode_token(refresh_token)
     except JWTError as exc:
         raise HTTPException(status_code=401, detail="Invalid refresh token") from exc
 
@@ -237,9 +287,14 @@ async def refresh_access_token(
         sub=decoded.get("sub"),
         type=decoded.get("type"),
         csrf=decoded.get("csrf"),
+        jti=decoded.get("jti"),
+        exp=decoded.get("exp"),
     )
     if token_data.sub is None or token_data.type != "refresh":
         raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    if await _is_token_revoked(token_data, cache):
+        raise HTTPException(status_code=401, detail="Refresh token has been revoked")
 
     result = await db.execute(select(User).where(User.id == token_data.sub))
     user = result.scalar_one_or_none()
@@ -254,6 +309,7 @@ async def refresh_access_token(
     )
     access_token = create_access_token(subject=user.id)
     _set_refresh_cookies(response, next_refresh_token, next_csrf_token)
+    await _revoke_token(refresh_token, cache)
 
     await AuditService.log(
         db,
@@ -274,8 +330,44 @@ async def refresh_access_token(
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(response: Response) -> None:
-    """Clear refresh and CSRF cookies for browser clients."""
+async def logout(
+    request: Request,
+    response: Response,
+    payload: LogoutRequest | None = None,
+    _: None = Depends(auth_rate_limit("logout")),
+    db: AsyncSession = Depends(get_db),
+    cache: RedisCache = Depends(get_cache),
+) -> None:
+    """Revoke active tokens and clear browser cookies."""
+    token_candidates = [
+        payload.access_token if payload else None,
+        payload.refresh_token if payload else None,
+    ]
+    authorization = request.headers.get("authorization")
+    if authorization and authorization.lower().startswith("bearer "):
+        token_candidates.append(authorization.split(" ", maxsplit=1)[1])
+
+    subjects: set[str] = set()
+    for token in token_candidates:
+        token_data = await _revoke_token(token, cache)
+        if token_data and token_data.sub:
+            subjects.add(token_data.sub)
+
+    for subject in subjects:
+        result = await db.execute(select(User).where(User.id == subject))
+        user = result.scalar_one_or_none()
+        if user is None:
+            continue
+        await AuditService.log(
+            db,
+            organization_id=user.organization_id,
+            user_id=user.id,
+            action="LOGOUT",
+            resource_type="auth",
+            details={"user_agent": request.headers.get("user-agent")},
+            ip_address=request.client.host if request.client else None,
+        )
+
     _clear_refresh_cookies(response)
 
 

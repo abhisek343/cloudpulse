@@ -3,12 +3,13 @@ CloudPulse AI - Cost Service
 Security utilities for authentication and authorization.
 """
 import base64
-import json
 import hashlib
 import hmac
+import json
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import uuid4
 
 from cryptography.fernet import Fernet, InvalidToken
 from jose import jwt
@@ -40,7 +41,14 @@ def create_access_token(subject: str | Any, expires_delta: timedelta | None = No
             minutes=settings.jwt_access_token_expire_minutes
         )
 
-    to_encode = {"exp": expire, "sub": str(subject), "type": "access"}
+    issued_at = datetime.now(timezone.utc)
+    to_encode = {
+        "exp": expire,
+        "iat": issued_at,
+        "jti": str(uuid4()),
+        "sub": str(subject),
+        "type": "access",
+    }
     encoded_jwt = jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
     return encoded_jwt
 
@@ -58,13 +66,37 @@ def create_refresh_token(
             days=settings.jwt_refresh_token_expire_days
         )
 
+    issued_at = datetime.now(timezone.utc)
     to_encode = {
         "exp": expire,
+        "iat": issued_at,
+        "jti": str(uuid4()),
         "sub": str(subject),
         "type": "refresh",
         "csrf": csrf_token,
     }
     return jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
+def decode_token(token: str) -> dict[str, Any]:
+    """Decode and validate a JWT."""
+    return jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+
+
+def get_token_ttl_seconds(payload: dict[str, Any]) -> int:
+    """Return the remaining lifetime for a decoded token payload."""
+    exp = payload.get("exp")
+    if isinstance(exp, datetime):
+        expires_at = exp.astimezone(timezone.utc)
+    elif isinstance(exp, (int, float)):
+        expires_at = datetime.fromtimestamp(exp, tz=timezone.utc)
+    elif isinstance(exp, str) and exp.isdigit():
+        expires_at = datetime.fromtimestamp(int(exp), tz=timezone.utc)
+    else:
+        raise ValueError("Token payload does not contain a valid exp claim")
+
+    remaining = int((expires_at - datetime.now(timezone.utc)).total_seconds())
+    return max(remaining, 0)
 
 
 def generate_csrf_token() -> str:

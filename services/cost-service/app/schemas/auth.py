@@ -32,6 +32,8 @@ class TokenPayload(BaseModel):
     sub: str | None = None
     type: str | None = None
     csrf: str | None = None
+    jti: str | None = None
+    exp: int | None = None
 
 
 class UserBase(BaseModel):
@@ -90,4 +92,10 @@ class LoginRequest(BaseModel):
 
 class RefreshTokenRequest(BaseModel):
     """Refresh token request schema."""
+    refresh_token: str | None = None
+
+
+class LogoutRequest(BaseModel):
+    """Logout request schema."""
+    access_token: str | None = None
     refresh_token: str | None = None

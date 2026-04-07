@@ -2,14 +2,16 @@
 CloudPulse AI - Cost Service
 Simple auth-focused rate limiting helpers.
 """
+from typing import Any
 from collections import defaultdict, deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from threading import Lock
 
-from fastapi import HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, status
 
+from app.core.cache import RedisCache, get_cache
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -29,8 +31,30 @@ class InMemoryRateLimiter:
         self._lock = Lock()
         self._events: dict[str, deque[datetime]] = defaultdict(deque)
 
-    def hit(self, bucket: str, policy: RateLimitPolicy) -> None:
+    async def hit(
+        self,
+        bucket: str,
+        policy: RateLimitPolicy,
+        cache: RedisCache | Any | None = None,
+    ) -> None:
         """Record a request or raise if the bucket is currently limited."""
+        cache_key = f"rate_limit:{bucket}"
+        if cache is not None and hasattr(cache, "increment"):
+            try:
+                request_count = await cache.increment(cache_key, ttl=policy.window_seconds)
+            except Exception:
+                request_count = None
+            else:
+                if request_count > policy.max_requests:
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail=(
+                            f"Too many {policy.name} attempts. "
+                            f"Try again in {policy.window_seconds} seconds."
+                        ),
+                    )
+                return
+
         now = datetime.now(timezone.utc)
         window_start = now - timedelta(seconds=policy.window_seconds)
 
@@ -75,8 +99,11 @@ def auth_rate_limit(policy_name: str) -> Callable[[Request], None]:
         window_seconds=settings.auth_rate_limit_window_seconds,
     )
 
-    def dependency(request: Request) -> None:
+    async def dependency(
+        request: Request,
+        cache: RedisCache = Depends(get_cache),
+    ) -> None:
         bucket = f"{policy.name}:{_request_ip(request)}"
-        rate_limiter.hit(bucket, policy)
+        await rate_limiter.hit(bucket, policy, cache)
 
     return dependency

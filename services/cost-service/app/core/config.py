@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     # Sync / Demo mode
     cloud_sync_mode: Literal["demo", "live"] = "demo"
     allow_live_cloud_sync: bool = False
+    cost_data_retention_months: int = Field(default=18, ge=1, le=120)
     default_demo_scenario: Literal["saas", "startup", "enterprise", "incident"] = "saas"
     default_demo_seed: int = 42
     default_demo_provider: Literal["aws", "azure", "gcp"] = "aws"
@@ -82,6 +83,9 @@ class Settings(BaseSettings):
     llm_model: str = "openrouter/free"
     llm_base_url: str | None = "https://openrouter.ai/api/v1"
     llm_timeout_seconds: float = 60.0
+    llm_enabled: bool = True
+    llm_allow_external_inference: bool = True
+    llm_context_policy: Literal["summary_only"] = "summary_only"
     llm_fallback_models: list[str] = Field(
         default_factory=lambda: [
             "stepfun/step-3.5-flash:free",
@@ -137,6 +141,14 @@ class Settings(BaseSettings):
 
         if self.debug:
             raise ValueError("DEBUG must be disabled in production")
+
+        if not self.auth_cookie_secure:
+            raise ValueError("AUTH_COOKIE_SECURE must be enabled in production")
+
+        if self.allow_live_cloud_sync and not self.account_credentials_key:
+            raise ValueError(
+                "ACCOUNT_CREDENTIALS_KEY must be configured in production when live cloud sync is enabled"
+            )
 
         return self
     

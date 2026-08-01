@@ -1,0 +1,11 @@
+global:
+  resolve_timeout: 5m
+
+# The local demo intentionally has no external receiver. Alertmanager still
+# evaluates and records alert state, which keeps the stack safe to run without
+# credentials or webhook endpoints. Configure a receiver in deployment config.
+route:
+  receiver: local-demo
+
+receivers:
+  - name: local-demo

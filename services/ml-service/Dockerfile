@@ -6,12 +6,18 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
-    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
 COPY pyproject.toml README.md ./
-RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -e '.[inference]'
+ARG INSTALL_INFERENCE=false
+RUN if [ "$INSTALL_INFERENCE" = "true" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends git && \
+      pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -e '.[inference]' && \
+      rm -rf /var/lib/apt/lists/*; \
+    else \
+      pip install --no-cache-dir -e .; \
+    fi
 
 # Copy application code
 COPY app/ ./app/

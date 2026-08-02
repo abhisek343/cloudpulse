@@ -432,3 +432,16 @@ MIT License - see [LICENSE](LICENSE) for details.
 **If this helped you understand cloud costs better, consider giving it a star!**
 
 </div>
+
+## Cloud demo
+
+[![CloudPulse cloud demo](docs/demo/cloudpulse-demo.gif)](docs/demo/cloudpulse-demo.mp4)
+
+This recording is generated on a clean GitHub Actions Ubuntu runner. It starts the safe synthetic-data stack, exercises the dashboard/API/monitoring path, and records the local CloudPulse dashboard. No cloud credentials or external provider calls are used.
+
+To reproduce locally:
+
+    docker compose up --build -d
+    bash scripts/demo-smoke.sh
+
+The local dashboard is available at http://localhost:3005. The demo stack is intentionally separate from live AWS, Azure, and GCP deployments.

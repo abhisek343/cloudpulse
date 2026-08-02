@@ -1,0 +1,120 @@
+name: Cloud demo video
+
+on:
+  push:
+    branches:
+      - codex/cloud-demo-recordings
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  demo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Start the safe demo stack
+        run: docker compose up --build --detach --wait --wait-timeout 300
+
+      - name: Run the deterministic demo smoke
+        run: bash scripts/demo-smoke.sh
+
+      - name: Install browser recorder
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          mkdir -p /tmp/cloudpulse-recorder /tmp/cloudpulse-video
+          cd /tmp/cloudpulse-recorder
+          npm init -y >/dev/null 2>&1
+          npm install --no-save playwright@1.52.0 >/dev/null 2>&1
+          npx playwright install --with-deps chromium >/dev/null 2>&1
+          cat > record.mjs <<'NODE'
+          import { chromium } from "playwright";
+
+          const browser = await chromium.launch({ headless: true });
+          const context = await browser.newContext({
+            viewport: { width: 1280, height: 720 },
+            recordVideo: { dir: "/tmp/cloudpulse-video", size: { width: 1280, height: 720 } }
+          });
+          const page = await context.newPage();
+
+          await page.goto("http://127.0.0.1:3005", {
+            waitUntil: "domcontentloaded",
+            timeout: 60000
+          });
+          await page.waitForTimeout(5000);
+
+          const email = page.locator('input[type="email"]');
+          const password = page.locator('input[type="password"]');
+          if (await email.count() && await password.count()) {
+            await email.first().fill("demo@cloudpulse.local");
+            await password.first().fill("DemoPass123!");
+            const submit = page.locator("button").filter({ hasText: /sign in|log in|login/i });
+            if (await submit.count()) {
+              await submit.first().click();
+              await page.waitForTimeout(5000);
+            }
+          }
+
+          await page.screenshot({ path: "/tmp/cloudpulse-video/dashboard.png" });
+          await page.waitForTimeout(3000);
+          await context.close();
+          await browser.close();
+          NODE
+          node record.mjs
+          video="$(find /tmp/cloudpulse-video -maxdepth 1 -type f -name '*.webm' | head -n 1)"
+          test -n "$video"
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p docs/demo
+          ffmpeg -y -i "$video" -c:v libx264 -pix_fmt yuv420p -movflags +faststart docs/demo/cloudpulse-demo.mp4
+          ffmpeg -y -i docs/demo/cloudpulse-demo.mp4 \
+            -vf "fps=8,scale=900:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=sierra2" \
+            docs/demo/cloudpulse-demo.gif
+          cp /tmp/cloudpulse-video/dashboard.png docs/demo/cloudpulse-dashboard.png
+
+      - name: Upload demo artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudpulse-cloud-demo
+          path: docs/demo
+
+      - name: Stop the demo stack
+        if: always()
+        run: docker compose down --volumes --remove-orphans
+
+      - name: Commit demo assets
+        shell: bash
+        run: |
+          mkdir -p /tmp/demo-assets
+          cp docs/demo/cloudpulse-demo.mp4 /tmp/demo-assets/cloudpulse-demo.mp4
+          cp docs/demo/cloudpulse-demo.gif /tmp/demo-assets/cloudpulse-demo.gif
+          cp docs/demo/cloudpulse-dashboard.png /tmp/demo-assets/cloudpulse-dashboard.png
+          rm -f docs/demo/cloudpulse-demo.mp4
+          rm -f docs/demo/cloudpulse-demo.gif
+          rm -f docs/demo/cloudpulse-dashboard.png
+          target_branch="$GITHUB_HEAD_REF"
+          if [ -z "$target_branch" ]; then target_branch="$GITHUB_REF_NAME"; fi
+          git fetch origin "$target_branch"
+          git checkout -B demo-assets "origin/$target_branch"
+          mkdir -p docs/demo
+          cp /tmp/demo-assets/cloudpulse-demo.mp4 docs/demo/cloudpulse-demo.mp4
+          cp /tmp/demo-assets/cloudpulse-demo.gif docs/demo/cloudpulse-demo.gif
+          cp /tmp/demo-assets/cloudpulse-dashboard.png docs/demo/cloudpulse-dashboard.png
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/demo/cloudpulse-demo.mp4 docs/demo/cloudpulse-demo.gif docs/demo/cloudpulse-dashboard.png
+          git diff --cached --quiet || git commit -m "docs: add cloud demo recording [skip ci]"
+          git push origin "demo-assets:$target_branch"

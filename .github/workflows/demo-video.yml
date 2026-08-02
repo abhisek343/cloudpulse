@@ -34,6 +34,8 @@ jobs:
       - name: Install browser recorder
         shell: bash
         run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
           mkdir -p /tmp/cloudpulse-recorder /tmp/cloudpulse-video
           cd /tmp/cloudpulse-recorder
           npm init -y >/dev/null 2>&1

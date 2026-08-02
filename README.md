@@ -129,35 +129,24 @@ CloudPulse AI is my answer to: *"What if FinOps tools were actually proactive?"*
 
 ### Prerequisites
 - Docker & Docker Compose
-- 4GB RAM (Chronos model is ~400MB)
+- 4GB RAM for the complete local observability stack
 
-### 1. Configure Environment
+### 1. Start The Safe Demo
 
 ```bash
 git clone https://github.com/abhisek343/cloudpulse.git
 cd cloudpulse
-cp .env.example .env
-```
-
-### 2. Start The Stack
-
-```bash
 docker compose up --build -d
 ```
 
-By default, CloudPulse runs in safe demo mode:
+That one command runs Alembic migrations and idempotently seeds a synthetic demo tenant before the API, worker, and frontend start. It requires no `.env` file and no cloud credentials. By default, CloudPulse runs in safe demo mode:
 - no real cloud API calls
 - no cloud credentials required
 - local-only synthetic billing data paths
-- the cost-service applies Alembic migrations on startup before serving traffic
+- no external LLM calls
+- Alertmanager records local alert state but does not send webhooks
 
-### 3. Seed The Demo Tenant
-
-```bash
-docker compose exec cost-service python /app/scripts/seed_data.py --reset
-```
-
-This creates:
+The automatic seed creates:
 - a demo admin user
 - four demo accounts across AWS, Azure, and GCP-shaped workloads
 - deterministic cost history with spikes, credits, tag gaps, service-mix shifts, and seasonality
@@ -180,6 +169,7 @@ Password: DemoPass123!
 | **Grafana** | http://localhost:3001 | admin / cloudpulse |
 | **Prometheus** | http://localhost:9090 | Metrics |
 | **Tempo** | http://localhost:3200 | Trace backend API |
+| **Alertmanager** | http://localhost:9093 | Local alert state (no outbound receiver) |
 
 ### Distributed Tracing
 
@@ -198,27 +188,46 @@ docker compose up --build -d
 
 # Reseed demo data
 docker compose exec cost-service python /app/scripts/seed_data.py --reset
+
+# Verify API, UI, monitoring, alerting, and safe demo mode
+bash scripts/demo-smoke.sh
 ```
 
-### Switch To Real Cloud Data Later
+The local ML container intentionally omits the optional Chronos model download. It still exposes the API and anomaly-detection paths and persists trained detector state in the `ml_models` volume. To build a heavier local inference image, run `INSTALL_ML_INFERENCE=true docker compose up --build -d` and ensure the build host can download the model dependencies.
 
-CloudPulse is demo-first, but the live-provider path is env-driven. You should not
-need code changes to switch from demo to real sync.
+### Live Provider Deployments
 
-1. Update `.env` to enable live sync:
+The checked-in `docker-compose.yml` is intentionally a **demo-only profile**.
+It pins `CLOUD_SYNC_MODE=demo` and `ALLOW_LIVE_CLOUD_SYNC=false` for the API,
+worker, and seed job, so changing those values in a root `.env` file does **not**
+turn the local demo into a live-cloud deployment. It must not be pointed at a
+production account or database.
+
+Live sync is an application capability, not a claim that the demo Compose stack
+has been production-approved. Deploy the cost API and worker through your own
+deployment configuration, without the demo seed job, and explicitly inject the
+following into both processes:
 
 ```env
 CLOUD_SYNC_MODE=live
 ALLOW_LIVE_CLOUD_SYNC=true
-NEXT_PUBLIC_DEFAULT_ACCOUNT_PROVIDER=aws
 ```
 
-2. Add provider credentials through environment variables or account credentials.
+Use non-demo database, message-queue, JWT, and credential-encryption secrets;
+apply least-privilege provider credentials; and run the provider preflight
+endpoint before scheduling a sync. The repository does not ship a live-provider
+Compose override or tested production manifests.
 
-Provider readiness today:
+Provider requirements:
+
+- AWS: Cost Explorer access and credentials available to both the API and worker.
+- Azure: Cost Management reader access plus subscription, tenant, and client credentials.
+- GCP: a BigQuery billing export and a principal that can read the configured export table.
+
+Provider readiness currently supported by the service:
 - AWS: live sync plus in-app preflight validation
 - Azure: live sync plus in-app tenant/API preflight validation
-- GCP: live path works through a standard BigQuery billing export
+- GCP: live path through a standard BigQuery billing export
 
 AWS:
 
@@ -248,15 +257,9 @@ GCP_BILLING_EXPORT_TABLE=your-project.your_dataset.gcp_billing_export_v1
 NEXT_PUBLIC_DEFAULT_ACCOUNT_PROVIDER=gcp
 ```
 
-3. Rebuild the stack so frontend `NEXT_PUBLIC_*` settings are baked into the app:
+1. Add a real cloud account from the UI and trigger sync only after preflight succeeds.
 
-```bash
-docker compose up --build -d
-```
-
-4. Add a real cloud account from the UI and trigger sync.
-
-5. Open `Settings` and run provider preflight checks to verify credentials, API access,
+2. Open `Settings` and run provider preflight checks to verify credentials, API access,
    and the cost source before you trust a live sync.
 
 For supported live providers, CloudPulse falls back to env-backed provider credentials
@@ -383,9 +386,9 @@ pytest -q
 
 ### Environment Notes
 
-- Root `.env.example` is the easiest starting point for local Docker usage.
+- Root `.env.example` is the easiest starting point for the local **demo** Docker stack. It is not a live-sync switch because `docker-compose.yml` pins safe demo settings.
 - Cost-service-specific defaults also live in `services/cost-service/.env.example`.
-- Real provider sync is disabled by default. Set `ALLOW_LIVE_CLOUD_SYNC=true` and `CLOUD_SYNC_MODE=live` before calling real cloud billing APIs.
+- Real provider sync is disabled by default. A production deployment must set `ALLOW_LIVE_CLOUD_SYNC=true` and `CLOUD_SYNC_MODE=live` in both the API and worker; the checked-in demo Compose stack always keeps both values safe.
 - Chat defaults to OpenRouter's free router (`openrouter/free`). Add your OpenRouter key to `LLM_API_KEY` to enable the analyst chat.
 - The ML service keeps heavy Chronos/Torch dependencies behind the `inference` extra so tests and CI stay lightweight.
 

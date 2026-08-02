@@ -254,6 +254,45 @@ class TestAnomalyDetector:
         result = detector.train(test_data)
         
         assert result["success"] is False
+
+    def test_trained_detector_state_survives_restart(
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A trained detector should reload from the mounted model directory."""
+        import app.services.anomaly_detector as detector_module
+
+        monkeypatch.setattr(detector_module.settings, "model_path", str(tmp_path))
+        cost_data = [
+            {"date": datetime(2026, 1, day), "amount": 100 + (day % 5) * 10}
+            for day in range(1, 31)
+        ]
+
+        trained = detector_module.AnomalyDetector()
+        result = trained.train(cost_data)
+
+        assert result["success"] is True
+        assert (tmp_path / "anomaly_detector.pkl").exists()
+
+        restarted = detector_module.AnomalyDetector()
+        assert restarted.is_fitted is True
+        assert restarted.feature_names == trained.feature_names
+
+    def test_corrupt_persisted_state_fails_closed(
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Bad persisted state must not make the detector look trained."""
+        import app.services.anomaly_detector as detector_module
+
+        monkeypatch.setattr(detector_module.settings, "model_path", str(tmp_path))
+        (tmp_path / "anomaly_detector.pkl").write_bytes(b"not a pickle")
+
+        detector = detector_module.AnomalyDetector()
+        assert detector.is_fitted is False
+        assert detector.model is None
     
     def test_detect_without_training(self):
         """Test detection returns error without training."""

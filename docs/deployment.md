@@ -35,12 +35,36 @@ alembic upgrade head
 3. Start the API service.
 4. Start the worker as a separate process using `python -m app.worker`.
 
-The API also runs startup migrations by default, but explicit migration execution should remain part of the deploy pipeline.
+Set `ENABLE_STARTUP_MIGRATIONS=false` in multi-replica deployments after this step. The local Compose stack follows this same pattern using a single `migrate` job, so the API and worker never race on schema migration.
+
+### Live provider prerequisites
+
+The repository's `docker-compose.yml` is a safe synthetic-demo environment, not
+a live-provider deployment profile. It always sets `CLOUD_SYNC_MODE=demo` and
+`ALLOW_LIVE_CLOUD_SYNC=false`; values in a root `.env` do not override those
+container settings. Do not attach that stack to production provider accounts or
+datastores.
+
+For a live deployment, explicitly configure **both** the API and worker with:
+
+```env
+CLOUD_SYNC_MODE=live
+ALLOW_LIVE_CLOUD_SYNC=true
+```
+
+Use a dedicated deployment manifest or orchestrator configuration that excludes
+the demo seed job. Supply provider credentials using the platform's secret
+manager, scope them to the minimum billing-read permissions, and verify the
+relevant `/api/v1/health/preflight/{provider}` response before enabling a sync.
+AWS needs Cost Explorer access; Azure needs Cost Management reader access and
+service-principal details; GCP needs a readable BigQuery billing export. This
+repository does not provide a production-live Compose override or represent the
+demo stack as validated against real provider accounts.
 
 ## ML Service
 
 1. Mount a persistent volume to the configured `model_path` so the persisted anomaly-detector state survives restarts.
-2. Install the `inference` extra if you need live Chronos inference:
+2. Install the `inference` extra if you need live Chronos inference. The default container purposefully omits the heavy optional model dependencies so the deterministic demo remains reproducible without downloading a foundation model:
 
 ```bash
 pip install -e ".[inference]"
@@ -52,7 +76,8 @@ pip install -e ".[inference]"
 
 - Prometheus scrapes `/metrics` from both backend services.
 - Alert rules live in `monitoring/prometheus/alerts.yml`.
-- Add an Alertmanager destination before using the rules in production.
+- The local Compose stack runs Alertmanager with a no-op receiver so alert state and routing are observable without emitting external notifications.
+- Configure a durable receiver (for example, PagerDuty, Slack, email, or a secured webhook) before treating alerts as production notifications.
 
 ## Tracing
 

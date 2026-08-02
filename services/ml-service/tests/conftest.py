@@ -17,8 +17,8 @@ if str(SERVICE_ROOT) in sys.path:
     sys.path.remove(str(SERVICE_ROOT))
 sys.path.insert(0, str(SERVICE_ROOT))
 
-from app.core.config import get_settings
-from app.main import app
+from app.core.config import get_settings  # noqa: E402
+from app.main import app  # noqa: E402
 
 
 @pytest_asyncio.fixture

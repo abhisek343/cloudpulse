@@ -17,6 +17,37 @@ services:
       timeout: 5s
       retries: 5
 
+  # Run schema changes exactly once before application containers start.  This
+  # prevents the API and worker from racing to execute Alembic on local boot.
+  migrate:
+    build:
+      context: ./services/cost-service
+      dockerfile: Dockerfile
+    command: alembic upgrade head
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:cloudpulse-dev-password@db:5432/cloudpulse
+      ENABLE_STARTUP_MIGRATIONS: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  # Idempotent, synthetic seed data. No provider credentials are read or used.
+  demo-seed:
+    build:
+      context: ./services/cost-service
+      dockerfile: Dockerfile
+    command: python scripts/seed_data.py
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:cloudpulse-dev-password@db:5432/cloudpulse
+      CLOUD_SYNC_MODE: demo
+      ALLOW_LIVE_CLOUD_SYNC: "false"
+      ENABLE_STARTUP_MIGRATIONS: "false"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
   # Redis Cache
   redis:
     image: redis:7-alpine
@@ -55,14 +86,17 @@ services:
       context: ./services/cost-service
       dockerfile: Dockerfile
     container_name: cloudpulse-cost-service
-    env_file:
-      - .env
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:cloudpulse-dev-password@db:5432/cloudpulse
       REDIS_URL: redis://redis:6379/0
       RABBITMQ_URL: amqp://cloudpulse:cloudpulse-dev-password@rabbitmq:5672/
       ENVIRONMENT: development
       DEBUG: "true"
+      CLOUD_SYNC_MODE: demo
+      ALLOW_LIVE_CLOUD_SYNC: "false"
+      LLM_ENABLED: "false"
+      LLM_ALLOW_EXTERNAL_INFERENCE: "false"
+      ENABLE_STARTUP_MIGRATIONS: "false"
       OTEL_ENABLED: "true"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       OTEL_EXPORTER_OTLP_INSECURE: "true"
@@ -75,6 +109,10 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      demo-seed:
+        condition: service_completed_successfully
       otel-collector:
         condition: service_started
     volumes:
@@ -87,6 +125,11 @@ services:
           cpus: "1.0"
     stop_grace_period: 30s
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   # Cost Worker (Background Tasks)
   cost-worker:
@@ -94,13 +137,14 @@ services:
       context: ./services/cost-service
       dockerfile: Dockerfile
     container_name: cloudpulse-cost-worker
-    env_file:
-      - .env
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:cloudpulse-dev-password@db:5432/cloudpulse
       REDIS_URL: redis://redis:6379/0
       RABBITMQ_URL: amqp://cloudpulse:cloudpulse-dev-password@rabbitmq:5672/
       ENVIRONMENT: development
+      CLOUD_SYNC_MODE: demo
+      ALLOW_LIVE_CLOUD_SYNC: "false"
+      ENABLE_STARTUP_MIGRATIONS: "false"
       OTEL_ENABLED: "true"
       OTEL_SERVICE_NAME: cloudpulse-cost-worker
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
@@ -113,6 +157,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       otel-collector:
         condition: service_started
     volumes:
@@ -131,9 +177,9 @@ services:
     build:
       context: ./services/ml-service
       dockerfile: Dockerfile
+      args:
+        INSTALL_INFERENCE: ${INSTALL_ML_INFERENCE:-false}
     container_name: cloudpulse-ml-service
-    env_file:
-      - .env
     environment:
       COST_SERVICE_URL: http://cost-service:8000
       REDIS_URL: redis://redis:6379/1
@@ -142,6 +188,7 @@ services:
       OTEL_ENABLED: "true"
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
       OTEL_EXPORTER_OTLP_INSECURE: "true"
+      MODEL_PATH: /app/models
     ports:
       - "8002:8000"
     depends_on:
@@ -159,6 +206,11 @@ services:
           cpus: "1.0"
     stop_grace_period: 15s
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   # Frontend Dashboard
   frontend:
@@ -181,9 +233,16 @@ services:
     ports:
       - "3005:3000"
     depends_on:
-      - cost-service
-      - ml-service
+      cost-service:
+        condition: service_healthy
+      ml-service:
+        condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   # Prometheus
   prometheus:
@@ -199,6 +258,43 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--web.enable-lifecycle"
+    depends_on:
+      cost-service:
+        condition: service_healthy
+      ml-service:
+        condition: service_healthy
+      alertmanager:
+        condition: service_started
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: cloudpulse-alertmanager
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml"]
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "9093:9093"
+    restart: unless-stopped
+
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: cloudpulse-postgres-exporter
+    environment:
+      DATA_SOURCE_NAME: postgresql://postgres:cloudpulse-dev-password@db:5432/cloudpulse?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.61.0
+    container_name: cloudpulse-redis-exporter
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   # Tempo trace backend

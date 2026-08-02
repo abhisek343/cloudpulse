@@ -95,8 +95,20 @@ jobs:
       - name: Commit demo assets
         shell: bash
         run: |
+          mkdir -p /tmp/demo-assets
+          cp docs/demo/cloudpulse-demo.mp4 /tmp/demo-assets/cloudpulse-demo.mp4
+          cp docs/demo/cloudpulse-demo.gif /tmp/demo-assets/cloudpulse-demo.gif
+          cp docs/demo/cloudpulse-dashboard.png /tmp/demo-assets/cloudpulse-dashboard.png
+          target_branch="$GITHUB_HEAD_REF"
+          if [ -z "$target_branch" ]; then target_branch="$GITHUB_REF_NAME"; fi
+          git fetch origin "$target_branch"
+          git checkout -B demo-assets "origin/$target_branch"
+          mkdir -p docs/demo
+          cp /tmp/demo-assets/cloudpulse-demo.mp4 docs/demo/cloudpulse-demo.mp4
+          cp /tmp/demo-assets/cloudpulse-demo.gif docs/demo/cloudpulse-demo.gif
+          cp /tmp/demo-assets/cloudpulse-dashboard.png docs/demo/cloudpulse-dashboard.png
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs/demo/cloudpulse-demo.mp4 docs/demo/cloudpulse-demo.gif docs/demo/cloudpulse-dashboard.png
           git diff --cached --quiet || git commit -m "docs: add cloud demo recording [skip ci]"
-          git push origin HEAD:codex/cloud-demo-recordings
+          git push origin "demo-assets:$target_branch"

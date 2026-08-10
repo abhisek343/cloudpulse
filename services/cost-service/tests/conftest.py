@@ -213,7 +213,7 @@ async def auth_headers(db_session: AsyncSession) -> dict[str, str]:
     await db_session.commit()
     await db_session.refresh(user)
 
-    token = create_access_token(user.id)
+    token = create_access_token(user.id, organization_id=user.organization_id)
     return {"Authorization": f"Bearer {token}"}
 
 

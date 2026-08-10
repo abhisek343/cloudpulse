@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     
     # Cost Service URL (for fetching data)
     cost_service_url: str = "http://localhost:8001"
+    internal_service_token: str | None = None
     
     # Redis
     redis_url: RedisDsn = Field(default="redis://localhost:6379/1")

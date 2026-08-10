@@ -9,6 +9,7 @@ from typing import Any
 from aio_pika import Message, connect_robust
 
 from app.core.config import get_settings
+from app.core.logging import sanitize_error
 from app.core.observability import SYNC_TASKS_PUBLISHED
 from app.core.tracing import get_span_kind, get_tracer, inject_trace_headers
 
@@ -40,19 +41,25 @@ async def publish_sync_task(task: dict[str, Any]) -> None:
                     auto_delete=False,
                 )
 
+                message_headers = {
+                    "x-cloudpulse-attempt": str(task.get("attempt", 0)),
+                }
                 await channel.default_exchange.publish(
                     Message(
                         body=json.dumps(task).encode(),
                         content_type="application/json",
-                        headers=inject_trace_headers({}),
+                        headers=inject_trace_headers(message_headers),
                     ),
                     routing_key=queue.name,
                 )
                 SYNC_TASKS_PUBLISHED.labels(task_type=task.get("type", "unknown"), status="published").inc()
-                logger.info("Published task: %s", task)
-            
-    except Exception as e:
+                logger.info(
+                    "Published sync task %s for account %s",
+                    task.get("task_id", "unknown"),
+                    task.get("account_id", "unknown"),
+                )
+
+    except Exception as exc:
         SYNC_TASKS_PUBLISHED.labels(task_type=task.get("type", "unknown"), status="failed").inc()
-        logger.error("Failed to publish task: %s", e)
-        # We might want to re-raise or handle gracefully depending on requirements
-        # For now, just log it so API doesn't crash
+        logger.error("Failed to publish task: %s", sanitize_error(exc))
+        raise RuntimeError("Failed to publish sync task to the message broker.") from exc

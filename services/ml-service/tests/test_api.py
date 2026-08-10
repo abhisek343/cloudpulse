@@ -39,9 +39,9 @@ class TestMLEndpoints:
     """Tests for ML API endpoints."""
     
     @pytest.mark.asyncio
-    async def test_get_model_status(self, client: AsyncClient):
+    async def test_get_model_status(self, client: AsyncClient, auth_headers: dict[str, str]):
         """Test model status endpoint."""
-        response = await client.get("/api/v1/ml/status")
+        response = await client.get("/api/v1/ml/status", headers=auth_headers)
         assert response.status_code == 200
         
         data = response.json()
@@ -141,7 +141,7 @@ class TestMLEndpoints:
                     ],
                 }
 
-        monkeypatch.setattr(ml_api, "get_detector", lambda: FakeDetector())
+        monkeypatch.setattr(ml_api, "get_detector", lambda *_args: FakeDetector())
 
         # Convert datetime to string for JSON
         cost_data = [
@@ -189,7 +189,7 @@ class TestMLEndpoints:
                 return {"success": True, "samples_used": len(cost_data)}
 
         monkeypatch.setattr(ml_api, "get_predictor", lambda: FakePredictor())
-        monkeypatch.setattr(ml_api, "get_detector", lambda: FakeDetector())
+        monkeypatch.setattr(ml_api, "get_detector", lambda *_args: FakeDetector())
 
         cost_data = [
             {"date": d["date"].isoformat(), "amount": d["amount"], "service": d["service"]}

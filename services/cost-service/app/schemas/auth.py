@@ -30,6 +30,7 @@ class Token(BaseModel):
 class TokenPayload(BaseModel):
     """Token payload schema."""
     sub: str | None = None
+    organization_id: str | None = None
     type: str | None = None
     csrf: str | None = None
     jti: str | None = None

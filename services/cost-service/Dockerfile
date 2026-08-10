@@ -2,6 +2,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+ENV PIP_DEFAULT_TIMEOUT=120 PIP_RETRIES=5
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
@@ -9,10 +11,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Python dependencies
 COPY pyproject.toml README.md alembic.ini ./
-RUN pip install --no-cache-dir -e .
+COPY app/ ./app/
+RUN python -m pip install --no-cache-dir --disable-pip-version-check 'hatchling>=1.25,<2' \
+    && python -m pip install --no-cache-dir --disable-pip-version-check --no-build-isolation .
 
 # Copy application code
-COPY app/ ./app/
 COPY alembic/ ./alembic/
 COPY scripts/ ./scripts/
 

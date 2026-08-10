@@ -13,20 +13,20 @@ DEFAULT_DEV_JWT_SECRET = "cloudpulse-dev-shared-secret-change-in-production"
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
-    
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
     )
-    
+
     # Application
     app_name: str = "CloudPulse AI - Cost Service"
     app_version: str = "0.1.0"
     environment: Literal["development", "staging", "production"] = "development"
     debug: bool = False
-    
+
     # API
     api_prefix: str = "/api/v1"
     cors_origins: list[str] = Field(
@@ -35,21 +35,25 @@ class Settings(BaseSettings):
     csrf_trusted_origins: list[str] = Field(
         default=["http://localhost:3000", "http://localhost:3005"]
     )
-    
+
     # Database
     database_url: PostgresDsn = Field(
         default="postgresql+asyncpg://postgres:postgres@localhost:5432/cloudpulse"
     )
     database_pool_size: int = 20
     database_max_overflow: int = 10
-    
+
     # Redis
     redis_url: RedisDsn = Field(default="redis://localhost:6379/0")
     redis_cache_ttl: int = 300  # 5 minutes
-    
+
     # RabbitMQ
     rabbitmq_url: str = Field(default="amqp://guest:guest@localhost:5672/")
-    
+
+    # Internal service calls
+    ml_service_url: str = "http://localhost:8002"
+    internal_service_token: str | None = None
+
     # AWS
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None
@@ -77,6 +81,10 @@ class Settings(BaseSettings):
     default_demo_seed: int = 42
     default_demo_provider: Literal["aws", "azure", "gcp"] = "aws"
 
+    min_samples_for_training: int = Field(default=14, ge=2, le=365)
+    forecast_days: int = Field(default=30, ge=1, le=365)
+    sync_max_attempts: int = Field(default=3, ge=1, le=10)
+
     # LLM
     llm_provider: str = "openrouter"  # openrouter, openai, anthropic, gemini, ollama
     llm_api_key: str | None = None
@@ -92,14 +100,14 @@ class Settings(BaseSettings):
             "nvidia/nemotron-3-super-120b-a12b-20230311:free",
         ]
     )
-    
+
     # Kubernetes / Prometheus
     prometheus_url: str = "http://prometheus-server:9090"
-    
+
     # Kubernetes Cost Estimation
     k8s_cpu_hourly_rate: float = 0.04  # $ per vCPU hour
     k8s_memory_hourly_rate: float = 0.004  # $ per GB hour
-    
+
     # JWT Authentication
     jwt_secret_key: str = Field(default=DEFAULT_DEV_JWT_SECRET)
     jwt_algorithm: str = "HS256"
@@ -111,7 +119,7 @@ class Settings(BaseSettings):
 
     # Account credentials
     account_credentials_key: str | None = None
-    
+
     @field_validator("jwt_secret_key", mode="before")
     @classmethod
     def validate_jwt_secret(cls, v: str | None) -> str:
@@ -129,7 +137,12 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_runtime_security(self) -> "Settings":
-        """Require safer runtime defaults outside local development."""
+        """Require safe credentials and runtime defaults for live operation."""
+        if self.cloud_sync_mode == "live" and self.allow_live_cloud_sync and not self.account_credentials_key:
+            raise ValueError(
+                "ACCOUNT_CREDENTIALS_KEY is required when live cloud sync is enabled"
+            )
+
         if self.environment != "production":
             return self
 
@@ -145,13 +158,8 @@ class Settings(BaseSettings):
         if not self.auth_cookie_secure:
             raise ValueError("AUTH_COOKIE_SECURE must be enabled in production")
 
-        if self.allow_live_cloud_sync and not self.account_credentials_key:
-            raise ValueError(
-                "ACCOUNT_CREDENTIALS_KEY must be configured in production when live cloud sync is enabled"
-            )
-
         return self
-    
+
     # Rate Limiting
     rate_limit_requests: int = 100
     rate_limit_window_seconds: int = 60

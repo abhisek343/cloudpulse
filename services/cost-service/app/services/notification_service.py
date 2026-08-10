@@ -8,6 +8,8 @@ from typing import Any
 
 import httpx
 
+from app.core.logging import sanitize_error
+
 logger = logging.getLogger(__name__)
 
 TIMEOUT = httpx.Timeout(10.0, connect=5.0)
@@ -51,7 +53,7 @@ class NotificationService:
             logger.error(f"Notification HTTP error ({channel_type}): {exc.response.status_code}")
             return False
         except Exception as exc:
-            logger.error(f"Notification delivery failed ({channel_type}): {exc}")
+            logger.error("Notification delivery failed (%s): %s", channel_type, sanitize_error(exc))
             return False
 
     async def send_test(self, channel_type: str, config: dict) -> bool:

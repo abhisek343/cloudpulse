@@ -6,12 +6,18 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function formatCurrency(amount: number, currency = "USD"): string {
-    return new Intl.NumberFormat("en-US", {
-        style: "currency",
-        currency,
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-    }).format(amount);
+    const normalizedCurrency = currency.trim().toUpperCase();
+    try {
+        return new Intl.NumberFormat("en-US", {
+            style: "currency",
+            currency: normalizedCurrency,
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        }).format(amount);
+    } catch {
+        // Preserve an explicit malformed/legacy code instead of silently showing USD.
+        return `${normalizedCurrency || "UNKNOWN"} ${amount.toFixed(2)}`;
+    }
 }
 
 export function formatPercent(value: number): string {

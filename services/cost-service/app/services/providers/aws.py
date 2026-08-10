@@ -14,6 +14,8 @@ from botocore.exceptions import ClientError
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.config import get_settings
+from app.core.logging import sanitize_error
+from app.services.currency import normalize_currency
 from app.services.providers.base import CostProvider
 
 logger = logging.getLogger(__name__)
@@ -72,8 +74,8 @@ class AWSCostProvider(CostProvider):
             return self._parse_response(results)
 
         except ClientError as e:
-            logger.error(f"AWS Cost Explorer Error: {e}")
-            raise RuntimeError(f"AWS Cost Explorer Error: {e}") from e
+            logger.error("AWS Cost Explorer Error: %s", sanitize_error(e))
+            raise RuntimeError(f"AWS Cost Explorer Error: {sanitize_error(e)}") from e
 
     async def get_forecast(
         self, start_date: datetime, end_date: datetime, granularity: str = "MONTHLY"
@@ -96,8 +98,8 @@ class AWSCostProvider(CostProvider):
                 "forecast_by_time": response.get("ForecastResultsByTime", []),
             }
         except ClientError as e:
-            logger.error(f"AWS Forecast Error: {e}")
-            raise RuntimeError(f"AWS Forecast Error: {e}") from e
+            logger.error("AWS Forecast Error: %s", sanitize_error(e))
+            raise RuntimeError(f"AWS Forecast Error: {sanitize_error(e)}") from e
 
     async def validate_live_access(self) -> dict[str, Any]:
         """Run a minimal Cost Explorer query to verify credentials and API access."""
@@ -116,8 +118,8 @@ class AWSCostProvider(CostProvider):
                 )
             )
         except ClientError as e:
-            logger.error(f"AWS live validation failed: {e}")
-            raise RuntimeError(f"AWS live validation failed: {e}") from e
+            logger.error("AWS live validation failed: %s", sanitize_error(e))
+            raise RuntimeError(f"AWS live validation failed: {sanitize_error(e)}") from e
 
         periods = len(response.get("ResultsByTime", []))
         return {
@@ -139,15 +141,16 @@ class AWSCostProvider(CostProvider):
                 metrics = group.get("Metrics", {})
 
                 amount = Decimal(metrics.get("UnblendedCost", {}).get("Amount", "0"))
-                if amount <= Decimal("0"):
+                if amount == Decimal("0"):
                     continue
+                currency = normalize_currency(metrics.get("UnblendedCost", {}).get("Unit"))
 
                 records.append(
                     {
                         "date": date_obj,
                         "service": service_name,
                         "amount": amount,
-                        "currency": metrics.get("UnblendedCost", {}).get("Unit", "USD"),
+                        "currency": currency,
                         "usage_quantity": Decimal(
                             metrics.get("UsageQuantity", {}).get("Amount", "0")
                         ),

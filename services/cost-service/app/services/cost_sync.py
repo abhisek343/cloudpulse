@@ -16,6 +16,7 @@ from app.core.observability import SYNC_DURATION
 from app.core.security import decrypt_credentials
 from app.models import CloudAccount, CostRecord
 from app.services.audit_service import AuditService
+from app.services.currency import normalize_currency
 from app.services.providers.factory import ProviderFactory
 
 
@@ -61,7 +62,8 @@ class CostSyncService:
         try:
             provider = ProviderFactory.get_provider(
                 cloud_account.provider,
-                credentials
+                credentials,
+                organization_id=cloud_account.organization_id,
             )
         except ValueError as exc:
             SYNC_DURATION.labels(
@@ -69,7 +71,7 @@ class CostSyncService:
                 mode=mode,
                 status="rejected",
             ).observe(time.perf_counter() - started_at)
-            cloud_account.last_sync_status = "error"
+            cloud_account.last_sync_status = "failed"
             cloud_account.last_sync_error = sanitize_error(exc)
             cloud_account.last_sync_completed_at = datetime.now(UTC)
             await self.db.flush()
@@ -93,7 +95,7 @@ class CostSyncService:
         try:
             breaker.ensure_closed()
         except CircuitOpenError as exc:
-            cloud_account.last_sync_status = "error"
+            cloud_account.last_sync_status = "failed"
             cloud_account.last_sync_error = sanitize_error(exc)
             cloud_account.last_sync_completed_at = datetime.now(UTC)
             await self.db.flush()
@@ -119,7 +121,7 @@ class CostSyncService:
                 mode=metric_mode,
                 status="error",
             ).observe(time.perf_counter() - started_at)
-            cloud_account.last_sync_status = "error"
+            cloud_account.last_sync_status = "failed"
             cloud_account.last_sync_error = sanitize_error(exc)
             cloud_account.last_sync_completed_at = datetime.now(UTC)
             cloud_account.last_sync_records_imported = 0
@@ -166,21 +168,22 @@ class CostSyncService:
                 )
             )
 
-            records_to_insert = [
-                CostRecord(
-                    cloud_account_id=cloud_account.id,
-                    date=record_data["date"],
-                    granularity="daily",
-                    service=record_data["service"],
-                    region=record_data.get("region"),
-                    resource_id=record_data.get("resource_id"),
-                    amount=record_data["amount"],
-                    currency=record_data.get("currency", "USD"),
-                    tags=record_data.get("tags"),
-                    record_metadata=record_data.get("record_metadata"),
+            records_to_insert = []
+            for record_data in parsed_records:
+                records_to_insert.append(
+                    CostRecord(
+                        cloud_account_id=cloud_account.id,
+                        date=record_data["date"],
+                        granularity="daily",
+                        service=record_data["service"],
+                        region=record_data.get("region"),
+                        resource_id=record_data.get("resource_id"),
+                        amount=record_data["amount"],
+                        currency=normalize_currency(record_data.get("currency")),
+                        tags=record_data.get("tags"),
+                        record_metadata=record_data.get("record_metadata"),
+                    )
                 )
-                for record_data in parsed_records
-            ]
 
             self.db.add_all(records_to_insert)
         

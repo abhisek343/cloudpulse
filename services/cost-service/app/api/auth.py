@@ -206,7 +206,11 @@ async def register_user(
     await db.refresh(user)
 
     csrf_token = generate_csrf_token()
-    refresh_token = create_refresh_token(subject=user.id, csrf_token=csrf_token)
+    refresh_token = create_refresh_token(
+        subject=user.id,
+        csrf_token=csrf_token,
+        organization_id=user.organization_id,
+    )
     _set_refresh_cookies(response, refresh_token, csrf_token)
 
     return user
@@ -244,9 +248,16 @@ async def login(
     )
     await db.commit() # Commit log
     
-    access_token = create_access_token(subject=user.id)
+    access_token = create_access_token(
+        subject=user.id,
+        organization_id=user.organization_id,
+    )
     csrf_token = generate_csrf_token()
-    refresh_token = create_refresh_token(subject=user.id, csrf_token=csrf_token)
+    refresh_token = create_refresh_token(
+        subject=user.id,
+        csrf_token=csrf_token,
+        organization_id=user.organization_id,
+    )
     _set_refresh_cookies(response, refresh_token, csrf_token)
     return {
         "access_token": access_token,
@@ -306,8 +317,12 @@ async def refresh_access_token(
         subject=user.id,
         csrf_token=next_csrf_token,
         expires_delta=timedelta(days=settings.jwt_refresh_token_expire_days),
+        organization_id=user.organization_id,
     )
-    access_token = create_access_token(subject=user.id)
+    access_token = create_access_token(
+        subject=user.id,
+        organization_id=user.organization_id,
+    )
     _set_refresh_cookies(response, next_refresh_token, next_csrf_token)
     await _revoke_token(refresh_token, cache)
 

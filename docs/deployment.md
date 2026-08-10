@@ -20,6 +20,7 @@ RABBITMQ_URL=amqp://...
 LLM_API_KEY=<optional but required for chat>
 OTEL_ENABLED=true
 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+INTERNAL_SERVICE_TOKEN=<shared secret for authenticated cost-service to ML-service calls>
 ```
 
 ## Cost Service
@@ -54,16 +55,18 @@ ALLOW_LIVE_CLOUD_SYNC=true
 
 Use a dedicated deployment manifest or orchestrator configuration that excludes
 the demo seed job. Supply provider credentials using the platform's secret
-manager, scope them to the minimum billing-read permissions, and verify the
-relevant `/api/v1/health/preflight/{provider}` response before enabling a sync.
+manager, scope them to the minimum billing-read permissions, and verify the authenticated
+relevant `/api/v1/health/preflight/{provider}` response before enabling a sync. Provider preflight is not a public readiness probe.
 AWS needs Cost Explorer access; Azure needs Cost Management reader access and
 service-principal details; GCP needs a readable BigQuery billing export. This
 repository does not provide a production-live Compose override or represent the
-demo stack as validated against real provider accounts.
+demo stack as validated against real provider accounts. Cost totals remain grouped by
+currency; no implicit FX conversion is performed, and forecasting/anomaly requests
+must contain one currency.
 
 ## ML Service
 
-1. Mount a persistent volume to the configured `model_path` so the persisted anomaly-detector state survives restarts.
+1. Mount a persistent volume to the configured model_path so the persisted organization-scoped anomaly-detector state survives restarts. Forecasting is request-stateless; the predictor does not retain tenant history.
 2. Install the `inference` extra if you need live Chronos inference. The default container purposefully omits the heavy optional model dependencies so the deterministic demo remains reproducible without downloading a foundation model:
 
 ```bash

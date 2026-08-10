@@ -3,9 +3,7 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
-    ArrowDown,
     ArrowUp,
-    FileCode2,
     Loader2,
     Minus,
     Plus,

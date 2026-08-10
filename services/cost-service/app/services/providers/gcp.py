@@ -16,6 +16,8 @@ from google.oauth2 import service_account
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.config import get_settings
+from app.core.logging import sanitize_error
+from app.services.currency import normalize_currency
 from app.services.providers.base import CostProvider
 
 logger = logging.getLogger(__name__)
@@ -114,11 +116,11 @@ SELECT
   COALESCE(service.description, 'Unknown') AS service_name,
   COALESCE(location.region, location.location, location.zone, 'global') AS region_name,
   SUM(cost) AS total_cost,
-  ANY_VALUE(currency) AS currency
+  currency
 FROM `{self.billing_export_table}`
 WHERE usage_start_time >= @start_time
   AND usage_start_time < @end_time
-GROUP BY usage_date, service_name, region_name
+GROUP BY usage_date, service_name, region_name, currency
 ORDER BY usage_date ASC, service_name ASC
 """
 
@@ -183,7 +185,7 @@ WHERE usage_start_time >= @start_time
                     "service": row["service_name"],
                     "region": row["region_name"] or "global",
                     "amount": amount,
-                    "currency": row["currency"] or "USD",
+                    "currency": normalize_currency(row["currency"]),
                     "usage_quantity": Decimal("0"),
                 }
             )
@@ -230,8 +232,8 @@ WHERE usage_start_time >= @start_time
                 lambda: list(self.bigquery_client.query(query, job_config=job_config).result())
             )
         except Exception as e:
-            logger.error(f"GCP live validation failed: {e}")
-            raise RuntimeError(f"GCP live validation failed: {e}") from e
+            logger.error("GCP live validation failed: %s", sanitize_error(e))
+            raise RuntimeError(f"GCP live validation failed: {sanitize_error(e)}") from e
 
         row_count = 0
         if rows:

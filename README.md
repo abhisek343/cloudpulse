@@ -23,7 +23,7 @@
 Existing FinOps tools show you what you **already spent**. That's not helpful when your bill arrives.
 
 I wanted a tool that:
-- **Predicts** next month's costs using foundation models (Amazon Chronos)
+- **Predicts** next month's costs with optional foundation-model inference (Amazon Chronos) and a deterministic local fallback
 - **Explains** cost spikes in plain English ("Why did EC2 costs jump last Tuesday?")
 - **Simulates** savings scenarios before you commit ("What if I move 40% to Spot?")
 - **Runs locally** - your billing data never leaves your VPC
@@ -52,7 +52,8 @@ CloudPulse AI is my answer to: *"What if FinOps tools were actually proactive?"*
 ## Features
 
 ### AI-Powered Cost Forecasting
-- **Amazon Chronos** (T5-based foundation model) for zero-shot time-series prediction
+- **Amazon Chronos** (T5-based foundation model) when the optional inference extra and model weights are installed
+- Deterministic moving-average/trend fallback keeps the local demo reproducible without model downloads
 - Confidence intervals (10th-90th percentile) for risk assessment
 - No training required - works out of the box with your data
 
@@ -69,12 +70,12 @@ CloudPulse AI is my answer to: *"What if FinOps tools were actually proactive?"*
 
 ### Anomaly Detection
 - Isolation Forest algorithm detects unusual spending patterns
-- Configurable sensitivity (low/medium/high)
+- Detector artifacts are persisted per organization, never in process-global tenant state
 - Automatic alerts for cost spikes
 
 ### Multi-Cloud Ready
 - Unified provider abstraction layer
-- AWS Cost Explorer integration (Azure, GCP: PRs welcome!)
+- AWS Cost Explorer, Azure Cost Management, and GCP BigQuery billing adapters
 - Extensible for custom/on-prem providers
 
 ---
@@ -102,7 +103,7 @@ CloudPulse AI is my answer to: *"What if FinOps tools were actually proactive?"*
     |     (FastAPI)     |                     |     (FastAPI)     |
     |       :8001       |                     |       :8002       |
     |                   |                     |                   |
-    | - Cost aggregation|                     | - Chronos (T5)    |
+    | - Cost aggregation|                     | - Optional Chronos |
     | - Provider sync   |                     | - Isolation Forest|
     | - K8s attribution |                     | - LLM integration |
     +-------------------+                     +-------------------+
@@ -112,7 +113,7 @@ CloudPulse AI is my answer to: *"What if FinOps tools were actually proactive?"*
               v                  v                        v
     +----------+  +---------+  +------------+  +------------------+
     | Postgres |  |  Redis  |  |  RabbitMQ  |  | Cloud Provider   |
-    |   :5432  |  |  :6379  |  |   :5672    |  | APIs (AWS, etc.) |
+    |   :5432  |  |  :6379  |  | :5672*    |  | APIs (AWS, etc.) |
     +----------+  +---------+  +------------+  +------------------+
                                      ^
                                      |
@@ -145,6 +146,7 @@ That one command runs Alembic migrations and idempotently seeds a synthetic demo
 - local-only synthetic billing data paths
 - no external LLM calls
 - Alertmanager records local alert state but does not send webhooks
+- live provider credentials cannot be stored unless ACCOUNT_CREDENTIALS_KEY is configured
 
 The automatic seed creates:
 - a demo admin user
@@ -170,6 +172,7 @@ Password: DemoPass123!
 | **Prometheus** | http://localhost:9090 | Metrics |
 | **Tempo** | http://localhost:3200 | Trace backend API |
 | **Alertmanager** | http://localhost:9093 | Local alert state (no outbound receiver) |
+| **OTel health** | http://localhost:13133 | Collector readiness |
 
 ### Distributed Tracing
 
@@ -193,7 +196,11 @@ docker compose exec cost-service python /app/scripts/seed_data.py --reset
 bash scripts/demo-smoke.sh
 ```
 
-The local ML container intentionally omits the optional Chronos model download. It still exposes the API and anomaly-detection paths and persists trained detector state in the `ml_models` volume. To build a heavier local inference image, run `INSTALL_ML_INFERENCE=true docker compose up --build -d` and ensure the build host can download the model dependencies.
+If host ports 5672 or 15672 are already occupied, set RABBITMQ_HOST_PORT and
+RABBITMQ_MANAGEMENT_HOST_PORT (for example 5673 and 15673) before each
+Compose command. The container-to-container RabbitMQ URL remains on port 5672.
+
+The local ML container intentionally omits the optional Chronos model download. Forecasts use a deterministic fallback until the inference extra and weights are installed; anomaly detector artifacts are persisted under an organization-scoped path in the ml_models volume. The predictor stores no tenant history. To build a heavier local inference image, run INSTALL_ML_INFERENCE=true docker compose up --build -d and ensure the build host can download the model dependencies.
 
 ### Live Provider Deployments
 
@@ -213,8 +220,9 @@ CLOUD_SYNC_MODE=live
 ALLOW_LIVE_CLOUD_SYNC=true
 ```
 
-Use non-demo database, message-queue, JWT, and credential-encryption secrets;
-apply least-privilege provider credentials; and run the provider preflight
+Use non-demo database, message-queue, JWT, internal-service, and credential-encryption secrets;
+set ACCOUNT_CREDENTIALS_KEY to a valid Fernet key before storing live account credentials;
+apply least-privilege provider credentials; and run the authenticated provider preflight
 endpoint before scheduling a sync. The repository does not ship a live-provider
 Compose override or tested production manifests.
 
@@ -277,7 +285,7 @@ which runs a lightweight live smoke test and reports missing env vars or access 
 
 | Layer | Technology | Why |
 |-------|------------|-----|
-| **ML/AI** | Amazon Chronos (T5), scikit-learn | Foundation model for zero-shot forecasting |
+| **ML/AI** | Optional Amazon Chronos (T5), scikit-learn | Forecasting with deterministic fallback and organization-scoped anomaly models |
 | **Backend** | FastAPI, SQLAlchemy 2.0, Pydantic | Async-first, type-safe Python |
 | **Frontend** | Next.js 16, TypeScript, Tailwind | Modern React with App Router |
 | **Data** | PostgreSQL, Redis, RabbitMQ | Battle-tested infrastructure |
@@ -389,15 +397,16 @@ pytest -q
 - Root `.env.example` is the easiest starting point for the local **demo** Docker stack. It is not a live-sync switch because `docker-compose.yml` pins safe demo settings.
 - Cost-service-specific defaults also live in `services/cost-service/.env.example`.
 - Real provider sync is disabled by default. A production deployment must set `ALLOW_LIVE_CLOUD_SYNC=true` and `CLOUD_SYNC_MODE=live` in both the API and worker; the checked-in demo Compose stack always keeps both values safe.
-- Chat defaults to OpenRouter's free router (`openrouter/free`). Add your OpenRouter key to `LLM_API_KEY` to enable the analyst chat.
-- The ML service keeps heavy Chronos/Torch dependencies behind the `inference` extra so tests and CI stay lightweight.
+- Chat is disabled in the local Compose demo and external inference is opt-in. Configure LLM_API_KEY and explicitly enable external inference only in a deployment that has reviewed the data policy.
+- The ML service keeps heavy Chronos/Torch dependencies behind the inference extra so tests and CI stay lightweight.
+- Cost aggregation groups records by currency; a mixed-currency tenant receives grouped totals and ML pages require a single currency. CloudPulse does not invent FX conversions or label mixed totals as USD.
 
 ---
 
 ## Roadmap
 
 - [x] AWS Cost Explorer integration
-- [x] Amazon Chronos for forecasting
+- [x] Optional Amazon Chronos forecasting with deterministic fallback
 - [x] Anomaly detection with Isolation Forest
 - [x] Natural language chat interface
 - [x] Azure Cost Management integration (live sync, preflight validation)

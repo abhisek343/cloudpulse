@@ -15,17 +15,30 @@ import {
     Cell,
 } from "recharts";
 import { useSimulatorStore } from "@/lib/simulator-store";
+import { formatCurrency } from "@/lib/utils";
 
 interface CostTrendChartProps {
-    data: Array<{ date: string; amount: number }>;
+    data: Array<{ date: string; amount: number; currency?: string }>;
     predictions?: Array<{ date: string; predicted_cost: number; lower_bound: number; upper_bound: number }>;
+    currency?: string | null;
 }
 
-export function CostTrendChart({ data, predictions }: CostTrendChartProps) {
+type CostChartPoint = {
+    date: string;
+    amount: number | null;
+    currency?: string;
+    simulated: number | null;
+    predicted: number | null;
+    lower: number | null;
+    upper: number | null;
+};
+
+export function CostTrendChart({ data, predictions, currency }: CostTrendChartProps) {
     const { isEnabled, spotCoverage, reservedCoverage, usageReduction } = useSimulatorStore();
+    const chartCurrency = currency || data.find((item) => item.currency)?.currency || "USD";
 
     // Merge historical data and predictions
-    const chartData = data.map(item => {
+    const chartData: CostChartPoint[] = data.map(item => {
         // Safe conversion of amount
         const amount = typeof item.amount === 'number' ? item.amount : 0;
 
@@ -33,7 +46,7 @@ export function CostTrendChart({ data, predictions }: CostTrendChartProps) {
             return {
                 ...item,
                 date: new Date(item.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-                amount: amount,
+                amount,
                 simulated: null,
                 predicted: null,
                 lower: null,
@@ -68,12 +81,12 @@ export function CostTrendChart({ data, predictions }: CostTrendChartProps) {
         predictions.forEach(pred => {
             chartData.push({
                 date: new Date(pred.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-                amount: null as any, // No actual amount for future
+                amount: null, // No actual amount for future
                 simulated: null,
                 predicted: pred.predicted_cost,
                 lower: pred.lower_bound,
                 upper: pred.upper_bound,
-            } as any);
+            });
         });
     }
 
@@ -92,7 +105,7 @@ export function CostTrendChart({ data, predictions }: CostTrendChartProps) {
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                 <XAxis dataKey="date" stroke="#9ca3af" fontSize={12} />
-                <YAxis stroke="#9ca3af" fontSize={12} tickFormatter={(val) => `$${val}`} />
+                <YAxis stroke="#9ca3af" fontSize={12} tickFormatter={(val) => formatCurrency(Number(val), chartCurrency)} />
                 <Tooltip
                     contentStyle={{
                         backgroundColor: "#1f2937",
@@ -100,8 +113,8 @@ export function CostTrendChart({ data, predictions }: CostTrendChartProps) {
                         borderRadius: "0.5rem",
                     }}
                     labelStyle={{ color: "#f3f4f6" }}
-                    formatter={(value: any, name: any) => [
-                        `$${Number(value).toFixed(2)}`,
+                    formatter={(value: number | string | undefined, name: string | undefined) => [
+                        formatCurrency(Number(value), chartCurrency),
                         name === 'simulated' ? 'Projected Savings' : name === 'predicted' ? 'AI Forecast' : 'Actual Cost'
                     ]}
                 />
@@ -142,12 +155,13 @@ export function CostTrendChart({ data, predictions }: CostTrendChartProps) {
 }
 
 interface ServiceCostChartProps {
-    data: Array<{ service: string; total_cost: number }>;
+    data: Array<{ service: string; total_cost: number; currency?: string }>;
 }
 
 const COLORS = ["#3b82f6", "#8b5cf6", "#ec4899", "#f97316", "#10b981", "#06b6d4", "#f59e0b"];
 
 export function ServiceCostChart({ data }: ServiceCostChartProps) {
+    const chartCurrency = data[0]?.currency || "USD";
     const chartData = data.slice(0, 7).map((item, index) => ({
         name: item.service.split(" ").slice(0, 2).join(" "),
         value: item.total_cost,
@@ -158,7 +172,7 @@ export function ServiceCostChart({ data }: ServiceCostChartProps) {
         <ResponsiveContainer width="100%" height={300}>
             <BarChart data={chartData} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" horizontal={false} />
-                <XAxis type="number" stroke="#9ca3af" fontSize={12} tickFormatter={(val) => `$${val}`} />
+                <XAxis type="number" stroke="#9ca3af" fontSize={12} tickFormatter={(val) => formatCurrency(Number(val), chartCurrency)} />
                 <YAxis
                     type="category"
                     dataKey="name"
@@ -173,7 +187,7 @@ export function ServiceCostChart({ data }: ServiceCostChartProps) {
                         border: "1px solid #374151",
                         borderRadius: "0.5rem",
                     }}
-                    formatter={(value) => [`$${(value as number)?.toFixed(2) || '0.00'}`, "Cost"]}
+                    formatter={(value) => [formatCurrency(Number(value) || 0, chartCurrency), "Cost"]}
                 />
                 <Bar dataKey="value" radius={[0, 4, 4, 0]}>
                     {chartData.map((entry, index) => (
@@ -186,10 +200,11 @@ export function ServiceCostChart({ data }: ServiceCostChartProps) {
 }
 
 interface CostDistributionChartProps {
-    data: Array<{ region: string; total_cost: number }>;
+    data: Array<{ region: string; total_cost: number; currency?: string }>;
 }
 
 export function CostDistributionChart({ data }: CostDistributionChartProps) {
+    const chartCurrency = data[0]?.currency || "USD";
     const chartData = data.slice(0, 6).map((item, index) => ({
         name: item.region,
         value: item.total_cost,
@@ -218,7 +233,7 @@ export function CostDistributionChart({ data }: CostDistributionChartProps) {
                         border: "1px solid #374151",
                         borderRadius: "0.5rem",
                     }}
-                    formatter={(value) => [`$${(value as number)?.toFixed(2) || '0.00'}`, "Cost"]}
+                    formatter={(value) => [formatCurrency(Number(value) || 0, chartCurrency), "Cost"]}
                 />
             </PieChart>
         </ResponsiveContainer>

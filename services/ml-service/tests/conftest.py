@@ -36,6 +36,7 @@ def auth_headers() -> dict[str, str]:
     token = jwt.encode(
         {
             "sub": "test-user",
+            "organization_id": "test-organization",
             "exp": datetime.now(timezone.utc) + timedelta(minutes=30),
         },
         settings.jwt_secret_key,

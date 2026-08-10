@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Bot, CheckCircle2, Cloud, Database, Loader2, Palette, PlayCircle, Plus, Save, Shield, Trash2, TriangleAlert, Zap } from "lucide-react";
+import { Bell, Bot, CheckCircle2, Cloud, Database, Loader2, Palette, PlayCircle, Plus, Save, Shield, Trash2, TriangleAlert } from "lucide-react";
 import { ChartCard } from "@/components/ui/card";
 import {
     getProviderPreflight,

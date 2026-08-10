@@ -21,6 +21,8 @@ from azure.mgmt.costmanagement.models import (
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.config import get_settings
+from app.core.logging import sanitize_error
+from app.services.currency import normalize_currency
 from app.services.providers.base import CostProvider
 
 logger = logging.getLogger(__name__)
@@ -107,8 +109,8 @@ class AzureProvider(CostProvider):
             return self._parse_response(result.rows)
 
         except Exception as e:
-            logger.error(f"Azure Cost Management Error: {e}")
-            raise RuntimeError(f"Azure Cost Management Error: {e}") from e
+            logger.error("Azure Cost Management Error: %s", sanitize_error(e))
+            raise RuntimeError(f"Azure Cost Management Error: {sanitize_error(e)}") from e
 
     def _parse_response(self, rows: list) -> list[dict[str, Any]]:
         """
@@ -130,7 +132,7 @@ class AzureProvider(CostProvider):
                 date_val = row[1]
                 service = row[2]
                 region = row[3]
-                currency = row[4] if len(row) > 4 else "USD"
+                currency = normalize_currency(row[4] if len(row) > 4 else None)
 
                 # Ensure date is datetime
                 if isinstance(date_val, str):
@@ -150,7 +152,7 @@ class AzureProvider(CostProvider):
                     }
                 )
             except (IndexError, ValueError) as e:
-                logger.warning(f"Failed to parse Azure cost row: {row} - {e}")
+                logger.warning("Failed to parse Azure cost row (%s): %s", type(row).__name__, sanitize_error(e))
                 continue
 
         return parsed_data
@@ -196,8 +198,8 @@ class AzureProvider(CostProvider):
             scope = f"/subscriptions/{self.subscription_id}"
             result = await to_thread.run_sync(lambda: self.client.query.usage(scope, query))
         except Exception as e:
-            logger.error(f"Azure live validation failed: {e}")
-            raise RuntimeError(f"Azure live validation failed: {e}") from e
+            logger.error("Azure live validation failed: %s", sanitize_error(e))
+            raise RuntimeError(f"Azure live validation failed: {sanitize_error(e)}") from e
 
         row_count = len(result.rows or [])
         return {

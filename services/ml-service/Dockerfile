@@ -2,6 +2,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+ENV PIP_DEFAULT_TIMEOUT=120 PIP_RETRIES=5
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
@@ -10,18 +12,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Python dependencies
 COPY pyproject.toml README.md ./
+COPY app/ ./app/
 ARG INSTALL_INFERENCE=false
-RUN if [ "$INSTALL_INFERENCE" = "true" ]; then \
+RUN python -m pip install --no-cache-dir --disable-pip-version-check 'hatchling>=1.25,<2' \
+    && if [ "$INSTALL_INFERENCE" = "true" ]; then \
       apt-get update && apt-get install -y --no-install-recommends git && \
-      pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -e '.[inference]' && \
+      python -m pip install --no-cache-dir --disable-pip-version-check --no-build-isolation --extra-index-url https://download.pytorch.org/whl/cpu '.[inference]' && \
       rm -rf /var/lib/apt/lists/*; \
     else \
-      pip install --no-cache-dir -e .; \
+      python -m pip install --no-cache-dir --disable-pip-version-check --no-build-isolation .; \
     fi
 
 # Copy application code
-COPY app/ ./app/
-
 # Create models directory
 RUN mkdir -p models
 

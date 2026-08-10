@@ -55,6 +55,7 @@ def test_production_live_sync_requires_credentials_key(monkeypatch: pytest.Monke
     monkeypatch.setenv("DEBUG", "false")
     monkeypatch.setenv("AUTH_COOKIE_SECURE", "true")
     monkeypatch.setenv("ALLOW_LIVE_CLOUD_SYNC", "true")
+    monkeypatch.setenv("CLOUD_SYNC_MODE", "live")
     monkeypatch.delenv("ACCOUNT_CREDENTIALS_KEY", raising=False)
 
     with pytest.raises(ValueError, match="ACCOUNT_CREDENTIALS_KEY"):

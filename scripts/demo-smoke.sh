@@ -122,7 +122,7 @@ test "$ml_unauth_status" = "401"
 # Exercise the actual frontend -> cost API -> RabbitMQ -> worker -> database path.
 accounts="$(curl --fail --silent --show-error --cookie "$cookiejar" http://localhost:3005/api/cost/accounts)"
 account_id="$(python -c 'import json, sys; print(json.load(sys.stdin)["items"][0]["id"])' <<<"$accounts")"
-csrf="$(awk '$6 == "cloudpulse_csrf_token" { print $7; exit }' "$cookiejar")"
+csrf="$(awk '$6 == "cloudpulse_csrf_token" || $6 == "__Host-cloudpulse_csrf_token" { print $7; exit }' "$cookiejar")"
 test -n "$csrf"
 sync_response="$(curl --fail --silent --show-error --cookie "$cookiejar"   -H "X-CSRF-Token: $csrf"   -X POST "http://localhost:3005/api/cost/accounts/$account_id/sync")"
 task_id="$(python -c 'import json, sys; print(json.load(sys.stdin)["task_id"])' <<<"$sync_response")"

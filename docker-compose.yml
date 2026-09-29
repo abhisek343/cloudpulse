@@ -195,6 +195,7 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_started
+    volumes:
       - ml_models:/app/models
     deploy:
       resources:

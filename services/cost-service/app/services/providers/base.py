@@ -14,6 +14,8 @@ class CostProvider(ABC):
     All provider implementations must inherit from this class.
     """
 
+    organization_id: str | None = None
+
     @abstractmethod
     async def get_cost_data(
         self, start_date: datetime, end_date: datetime, granularity: str = "DAILY"

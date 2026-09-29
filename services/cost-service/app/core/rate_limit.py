@@ -45,15 +45,16 @@ class InMemoryRateLimiter:
             except Exception:
                 request_count = None
             else:
-                if request_count > policy.max_requests:
-                    raise HTTPException(
-                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                        detail=(
-                            f"Too many {policy.name} attempts. "
-                            f"Try again in {policy.window_seconds} seconds."
-                        ),
-                    )
-                return
+                if request_count is not None:
+                    if request_count > policy.max_requests:
+                        raise HTTPException(
+                            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                            detail=(
+                                f"Too many {policy.name} attempts. "
+                                f"Try again in {policy.window_seconds} seconds."
+                            ),
+                        )
+                    return
 
         now = datetime.now(timezone.utc)
         window_start = now - timedelta(seconds=policy.window_seconds)
@@ -91,7 +92,7 @@ def _request_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def auth_rate_limit(policy_name: str) -> Callable[[Request], None]:
+def auth_rate_limit(policy_name: str) -> Callable[..., Any]:
     """Build a dependency that rate limits auth-sensitive endpoints."""
     policy = RateLimitPolicy(
         name=policy_name,

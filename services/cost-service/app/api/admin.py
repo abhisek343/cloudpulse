@@ -3,6 +3,7 @@ CloudPulse AI - Cost Service
 Admin endpoints for system observability.
 """
 from typing import Annotated
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, desc
@@ -22,7 +23,7 @@ async def get_audit_logs(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     action: str | None = None,
-):
+) -> list[dict[str, Any]]:
     """
     Get system audit logs.
     Only accessible by admins.

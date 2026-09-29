@@ -9,9 +9,10 @@ import json
 import logging
 import signal
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Callable
 
-from aio_pika import IncomingMessage, connect_robust
+from aio_pika import connect_robust
+from aio_pika.abc import AbstractIncomingMessage, AbstractRobustConnection, AbstractRobustChannel, AbstractRobustQueue
 from sqlalchemy import select
 
 from app.core.cache import cache
@@ -39,25 +40,27 @@ tracer = get_tracer(__name__)
 
 class Worker:
     def __init__(self) -> None:
-        self.connection = None
-        self.channel = None
-        self.queue = None
+        self.connection: AbstractRobustConnection | None = None
+        self.channel: AbstractRobustChannel | None = None
+        self.queue: AbstractRobustQueue | None = None
         self.should_exit = False
-        self.flush_traces = lambda: None
+        self.flush_traces: Callable[[], bool | None] = lambda: None
 
     async def connect(self) -> None:
         """Connect to RabbitMQ and declare the durable task queue."""
         logger.info("Connecting to RabbitMQ")
-        self.connection = await connect_robust(settings.rabbitmq_url)
-        self.channel = await self.connection.channel()
-        self.queue = await self.channel.declare_queue(
+        connection = await connect_robust(settings.rabbitmq_url)
+        channel = await connection.channel()
+        self.queue = await channel.declare_queue(
             "cost_sync_tasks",
             durable=True,
             auto_delete=False,
         )
-        await self.channel.set_qos(prefetch_count=1)
+        await channel.set_qos(prefetch_count=1)
+        self.connection = connection
+        self.channel = channel
 
-    async def process_message(self, message: IncomingMessage) -> None:
+    async def process_message(self, message: AbstractIncomingMessage) -> None:
         """Process one message and keep broker acknowledgment semantics explicit."""
         trace_context = extract_trace_context(message.headers)
         with tracer.start_as_current_span(
@@ -273,6 +276,8 @@ class Worker:
         )
         await self.connect()
         logger.info("Worker started. Waiting for messages...")
+        if self.queue is None:
+            raise RuntimeError("Worker queue was not initialized")
         async with self.queue.iterator() as queue_iter:
             async for message in queue_iter:
                 await self.process_message(message)

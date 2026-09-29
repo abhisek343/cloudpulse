@@ -48,10 +48,12 @@ class AzureProvider(CostProvider):
                 "AZURE_CLIENT_SECRET or provide them in the account credentials."
             )
 
-    def _require_credentials(self) -> None:
+    def _require_credentials(self) -> tuple[str, str, str, str]:
         """Raise a clear error when Azure live sync is not fully configured."""
-        if all([self.subscription_id, self.tenant_id, self.client_id, self.client_secret]):
-            return
+        if all(isinstance(value, str) and value for value in
+               (self.subscription_id, self.tenant_id, self.client_id, self.client_secret)):
+            return (str(self.subscription_id), str(self.tenant_id),
+                    str(self.client_id), str(self.client_secret))
 
         raise ValueError(
             "Azure live sync requires AZURE_SUBSCRIPTION_ID, AZURE_TENANT_ID, "
@@ -62,13 +64,13 @@ class AzureProvider(CostProvider):
     @property
     def client(self) -> CostManagementClient:
         """Lazy load client."""
-        self._require_credentials()
+        subscription_id, tenant_id, client_id, client_secret = self._require_credentials()
         credential = ClientSecretCredential(
-            tenant_id=self.tenant_id,
-            client_id=self.client_id,
-            client_secret=self.client_secret,
+            tenant_id=tenant_id,
+            client_id=client_id,
+            client_secret=client_secret,
         )
-        return CostManagementClient(credential, self.subscription_id)
+        return CostManagementClient(credential, subscription_id)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def get_cost_data(
@@ -106,7 +108,7 @@ class AzureProvider(CostProvider):
 
             result = await to_thread.run_sync(lambda: self.client.query.usage(scope, query))
 
-            return self._parse_response(result.rows)
+            return self._parse_response(result.rows if result else [])
 
         except Exception as e:
             logger.error("Azure Cost Management Error: %s", sanitize_error(e))
@@ -201,7 +203,7 @@ class AzureProvider(CostProvider):
             logger.error("Azure live validation failed: %s", sanitize_error(e))
             raise RuntimeError(f"Azure live validation failed: {sanitize_error(e)}") from e
 
-        row_count = len(result.rows or [])
+        row_count = len(result.rows or []) if result else 0
         return {
             "detail": (
                 "Connected to Azure Cost Management and executed a minimal "

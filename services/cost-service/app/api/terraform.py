@@ -54,7 +54,7 @@ class SupportedResource(BaseModel):
 async def estimate_terraform_plan(
     request: TerraformPlanRequest,
     current_user: Annotated[User, Depends(get_current_user)],
-):
+) -> dict:
     """Estimate monthly costs from a Terraform plan JSON."""
     try:
         result = estimate_plan(request.plan_json)
@@ -66,6 +66,6 @@ async def estimate_terraform_plan(
 @router.get("/supported-resources", response_model=list[SupportedResource])
 async def list_supported_resources(
     current_user: Annotated[User, Depends(get_current_user)],
-):
+) -> list[dict[str, str]]:
     """List all Terraform resource types supported for cost estimation."""
     return get_supported_resources()

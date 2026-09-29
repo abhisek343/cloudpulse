@@ -120,7 +120,7 @@ ml_unauth_status="$(curl --silent --output /dev/null --write-out "%{http_code}" 
 test "$ml_unauth_status" = "401"
 
 # Exercise the actual frontend -> cost API -> RabbitMQ -> worker -> database path.
-accounts="$(curl --fail --silent --show-error --cookie "$cookiejar" http://localhost:3005/api/cost/accounts/)"
+accounts="$(curl --fail --silent --show-error --cookie "$cookiejar" http://localhost:3005/api/cost/accounts)"
 account_id="$(python -c 'import json, sys; print(json.load(sys.stdin)["items"][0]["id"])' <<<"$accounts")"
 csrf="$(awk '$6 == "cloudpulse_csrf_token" { print $7; exit }' "$cookiejar")"
 test -n "$csrf"

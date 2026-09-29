@@ -19,7 +19,7 @@ settings = get_settings()
 class ProviderFactory:
     """Factory to get the correct Cost Provider instance."""
     
-    _providers: dict[str, type[CostProvider]] = {
+    _providers = {
         "demo": DemoProvider,
         "aws": AWSCostProvider,
         "azure": AzureProvider,
@@ -71,7 +71,9 @@ class ProviderFactory:
                 "CLOUD_SYNC_MODE=live to use real provider APIs."
             )
 
-        provider_class = cls._providers.get(provider_type)
+        provider_class = cls._providers[provider_type]
+        if provider_class is DemoProvider:
+            raise ValueError("Demo provider must use demo mode.")
         provider = provider_class(credentials)
         provider.organization_id = organization_id
         return provider

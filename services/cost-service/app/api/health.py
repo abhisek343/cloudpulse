@@ -5,7 +5,7 @@ Health check endpoints.
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, Callable
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
@@ -28,13 +28,14 @@ from app.schemas import (
 from app.services.providers.aws import AWSCostProvider
 from app.services.providers.azure import AzureProvider
 from app.services.providers.gcp import GCPProvider
+from app.services.providers.base import CostProvider
 from app.services.llm_service import is_external_llm_provider
 from app.models import User
 
 router = APIRouter()
 settings = get_settings()
 
-LIVE_PROVIDER_CLASSES = {
+LIVE_PROVIDER_CLASSES: dict[str, Callable[[dict[str, Any]], CostProvider]] = {
     "aws": AWSCostProvider,
     "azure": AzureProvider,
     "gcp": GCPProvider,

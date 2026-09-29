@@ -156,8 +156,9 @@ def _apply_metadata_variation(
         updated_tags.pop("owner", None)
         updated_metadata["tag_gap"] = "missing_owner"
 
+    return_tags: dict | None = updated_tags
     if rng.random() < 0.03:
-        updated_tags = None
+        return_tags = None
         updated_metadata["tag_gap"] = "untagged"
 
     if rng.random() < 0.12:
@@ -165,7 +166,7 @@ def _apply_metadata_variation(
     else:
         updated_metadata["ingestion_lag_hours"] = 0
 
-    return updated_tags, updated_metadata
+    return return_tags, updated_metadata
 
 
 def _build_adjustment_records(

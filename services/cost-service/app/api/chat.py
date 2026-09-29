@@ -9,6 +9,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user
@@ -141,7 +142,7 @@ async def analyze_cost_chat(
     service_filter = request.context_keys.get("service")
     region_filter = request.context_keys.get("region")
 
-    filters: list[object] = [
+    filters: list[ColumnElement[bool]] = [
         CloudAccount.organization_id == current_user.organization_id,
         CostRecord.date >= start_date,
         CostRecord.date <= end_date,

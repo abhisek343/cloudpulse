@@ -48,7 +48,7 @@ async def publish_sync_task(task: dict[str, Any]) -> None:
                     Message(
                         body=json.dumps(task).encode(),
                         content_type="application/json",
-                        headers=inject_trace_headers(message_headers),
+                        headers=dict[str, Any](inject_trace_headers(message_headers)),
                     ),
                     routing_key=queue.name,
                 )

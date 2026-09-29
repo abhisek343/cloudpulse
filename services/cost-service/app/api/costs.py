@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
+from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user
@@ -60,9 +61,9 @@ def _build_cost_filters(
     business_unit: str | None = None,
     environment: str | None = None,
     cost_center: str | None = None,
-) -> list[object]:
+) -> list[ColumnElement[bool]]:
     """Build the shared filter list used across cost aggregation queries."""
-    filters: list[object] = [
+    filters: list[ColumnElement[bool]] = [
         CloudAccount.organization_id == organization_id,
         CostRecord.date >= start_date,
         CostRecord.date <= end_date,
@@ -241,14 +242,14 @@ async def get_cost_summary(
     ).all()
 
     by_service_by_currency: dict[str, dict[str, Decimal]] = defaultdict(dict)
-    for row in service_rows:
-        if row.service and row.total is not None:
-            by_service_by_currency[row.service][_stored_currency(row.currency)] = Decimal(str(row.total))
+    for service_row in service_rows:
+        if service_row.service and service_row.total is not None:
+            by_service_by_currency[service_row.service][_stored_currency(service_row.currency)] = Decimal(str(service_row.total))
 
     by_region_by_currency: dict[str, dict[str, Decimal]] = defaultdict(dict)
-    for row in region_rows:
-        if row.region and row.total is not None:
-            by_region_by_currency[row.region][_stored_currency(row.currency)] = Decimal(str(row.total))
+    for region_row in region_rows:
+        if region_row.region and region_row.total is not None:
+            by_region_by_currency[region_row.region][_stored_currency(region_row.currency)] = Decimal(str(region_row.total))
 
     by_day_by_currency: dict[object, dict[str, Decimal]] = defaultdict(dict)
     for row in day_rows:
@@ -628,9 +629,9 @@ async def get_cost_reconciliation(
     provider_records = await provider.get_cost_data(start_date=start_date, end_date=end_date, granularity="DAILY")
     provider_by_currency: dict[str, Decimal] = defaultdict(Decimal)
     try:
-        for row in provider_records:
-            provider_currency = normalize_currency(row.get("currency"))
-            provider_by_currency[provider_currency] += Decimal(str(row.get("amount", 0)))
+        for provider_record in provider_records:
+            provider_currency = normalize_currency(provider_record.get("currency"))
+            provider_by_currency[provider_currency] += Decimal(str(provider_record.get("amount", 0)))
     except (TypeError, ValueError, ArithmeticError) as exc:
         raise HTTPException(
             status_code=422,

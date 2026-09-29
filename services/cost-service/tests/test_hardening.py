@@ -5,7 +5,7 @@ Tests for circuit breaker, rate limiter, logging, and cost sync hardening.
 import asyncio
 import time
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from app.core.circuit_breaker import (
     CircuitBreaker,
@@ -76,6 +76,19 @@ class TestCircuitBreaker:
 
 
 class TestInMemoryRateLimiter:
+    @pytest.mark.asyncio
+    async def test_missing_redis_count_uses_local_limit(self):
+        limiter = InMemoryRateLimiter()
+        policy = RateLimitPolicy(name="test", max_requests=1, window_seconds=60)
+        cache = MagicMock()
+        cache.increment = AsyncMock(return_value=None)
+
+        await limiter.hit("bucket-with-missing-count", policy, cache)
+        with pytest.raises(HTTPException) as exc_info:
+            await limiter.hit("bucket-with-missing-count", policy, cache)
+
+        assert exc_info.value.status_code == 429
+
     def test_allows_under_limit(self):
         limiter = InMemoryRateLimiter()
         policy = RateLimitPolicy(name="test", max_requests=5, window_seconds=60)

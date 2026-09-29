@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Callable, Literal
 
 from app.core.config import get_settings
 
@@ -29,12 +29,12 @@ try:
 
     OTEL_AVAILABLE = True
 except ImportError:  # pragma: no cover - optional dependency path
-    Context = Any  # type: ignore[assignment]
-    FastAPIInstrumentor = None  # type: ignore[assignment]
-    HTTPXClientInstrumentor = None  # type: ignore[assignment]
-    RedisInstrumentor = None  # type: ignore[assignment]
-    SQLAlchemyInstrumentor = None  # type: ignore[assignment]
-    SpanKind = None  # type: ignore[assignment]
+    Context = Any  # type: ignore
+    FastAPIInstrumentor = None  # type: ignore
+    HTTPXClientInstrumentor = None  # type: ignore
+    RedisInstrumentor = None  # type: ignore
+    SQLAlchemyInstrumentor = None  # type: ignore
+    SpanKind = None  # type: ignore
     OTEL_AVAILABLE = False
 
 
@@ -50,7 +50,7 @@ class _NoopSpanContext:
     def __enter__(self) -> _NoopSpan:
         return _NoopSpan()
 
-    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> Literal[False]:
         return False
 
 
@@ -170,7 +170,7 @@ def setup_tracing(
     engine: Any | None = None,
     service_name: str | None = None,
     instrument_redis: bool = False,
-) -> callable:
+) -> Callable[[], bool | None]:
     """Configure tracing for the current process and instrument supported libraries."""
     global _httpx_instrumented, _redis_instrumented, _sqlalchemy_instrumented
 

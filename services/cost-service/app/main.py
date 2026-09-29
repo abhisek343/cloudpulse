@@ -5,9 +5,11 @@ FastAPI application entry point.
 import logging
 import signal
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Callable, Awaitable
 
 from fastapi import FastAPI
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
@@ -73,7 +75,6 @@ def create_app() -> FastAPI:
     # Global API rate limiting
     from app.core.rate_limit import rate_limiter, RateLimitPolicy, _request_ip
     from starlette.middleware.base import BaseHTTPMiddleware
-    from starlette.requests import Request as StarletteRequest
     from starlette.responses import JSONResponse
 
     global_policy = RateLimitPolicy(
@@ -83,11 +84,11 @@ def create_app() -> FastAPI:
     )
 
     class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
-        async def dispatch(self, request: StarletteRequest, call_next):
+        async def dispatch(self, request: StarletteRequest, call_next: Callable[[StarletteRequest], Awaitable[Response]]) -> Response:
             path = request.url.path
             if path.startswith(("/health", "/metrics", "/docs", "/redoc", "/openapi")):
                 return await call_next(request)
-            ip = _request_ip(request)  # type: ignore[arg-type]
+            ip = _request_ip(request)
             try:
                 await rate_limiter.hit(f"global:{ip}", global_policy)
             except Exception:

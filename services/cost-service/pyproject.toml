@@ -77,3 +77,8 @@ addopts = "-v --cov=app --cov-report=term-missing"
 [tool.mypy]
 python_version = "3.11"
 strict = true
+# Existing response payloads and third-party SDKs still use dynamically shaped data.
+# Keep structural errors checked while these interfaces are typed incrementally.
+disallow_any_generics = false
+warn_return_any = false
+disallow_untyped_calls = false

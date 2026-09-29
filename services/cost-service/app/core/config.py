@@ -37,14 +37,12 @@ class Settings(BaseSettings):
     )
 
     # Database
-    database_url: PostgresDsn = Field(
-        default="postgresql+asyncpg://postgres:postgres@localhost:5432/cloudpulse"
-    )
+    database_url: PostgresDsn = PostgresDsn("postgresql+asyncpg://postgres:postgres@localhost:5432/cloudpulse")
     database_pool_size: int = 20
     database_max_overflow: int = 10
 
     # Redis
-    redis_url: RedisDsn = Field(default="redis://localhost:6379/0")
+    redis_url: RedisDsn = RedisDsn("redis://localhost:6379/0")
     redis_cache_ttl: int = 300  # 5 minutes
 
     # RabbitMQ

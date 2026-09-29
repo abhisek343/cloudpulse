@@ -69,14 +69,21 @@ wait_for "http://localhost:9093/-/ready" "Alertmanager"
 # Exercise the same Next.js session/proxy path used by the browser UI.
 frontend_login="$(curl --fail --silent --show-error \
   --cookie-jar "$cookiejar" \
+  --dump-header "$tmpdir/login.headers" \
   -F "username=demo@cloudpulse.local" \
   -F "password=DemoPass123!" \
   http://localhost:3005/api/auth/login)"
+if [[ -z "$frontend_login" ]]; then
+  echo "Frontend login returned an empty body; response status and headers:" >&2
+  sed -E '/^[Ss]et-[Cc]ookie:/d' "$tmpdir/login.headers" >&2
+  exit 1
+fi
 python -c '
 import json, sys
 login = json.load(sys.stdin)
 assert login["token_type"] == "bearer", login
 ' <<<"$frontend_login"
+echo "Frontend login response validated"
 
 me="$(curl --fail --silent --show-error --cookie "$cookiejar" http://localhost:3005/api/auth/me)"
 python -c '
@@ -85,6 +92,7 @@ profile = json.load(sys.stdin)
 assert profile["email"] == "demo@cloudpulse.local", profile
 assert profile.get("organization_id"), profile
 ' <<<"$me"
+echo "Authenticated profile response validated"
 
 summary="$(curl --fail --silent --show-error --cookie "$cookiejar"   "http://localhost:3005/api/cost/costs/summary?days=30")"
 python -c '
@@ -94,6 +102,7 @@ assert summary["currency"] == "USD", summary
 assert summary["total_cost"] is not None, summary
 assert "credentials" not in summary, summary
 ' <<<"$summary"
+echo "Cost summary response validated"
 
 ml_status="$(curl --fail --silent --show-error --cookie "$cookiejar" http://localhost:3005/api/ml/ml/status)"
 python -c '
@@ -102,6 +111,7 @@ status = json.load(sys.stdin)
 assert "predictor_fitted" in status, status
 assert "detector_fitted" in status, status
 ' <<<"$ml_status"
+echo "ML status response validated"
 
 # Public health remains public; live-provider preflight and ML status do not.
 preflight_status="$(curl --silent --output /dev/null --write-out "%{http_code}" http://localhost:8001/api/v1/health/preflight/gcp)"

@@ -7,6 +7,11 @@ describe("utils", () => {
         expect(formatCurrency(1234.5)).toBe("$1,234.50");
     });
 
+    it("preserves explicit non-USD denominations", () => {
+        expect(formatCurrency(1234.5, "eur")).toContain("1,234.50")
+        expect(formatCurrency(1234.5, "US$")).toBe("US$ 1234.50")
+    })
+
     it("formats percentages with signs", () => {
         expect(formatPercent(12.345)).toBe("+12.35%");
         expect(formatPercent(-4.321)).toBe("-4.32%");

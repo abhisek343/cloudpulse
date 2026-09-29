@@ -70,8 +70,8 @@ services:
       RABBITMQ_DEFAULT_USER: cloudpulse
       RABBITMQ_DEFAULT_PASS: cloudpulse-dev-password
     ports:
-      - "5672:5672"
-      - "15672:15672" # Management UI
+      - "${RABBITMQ_HOST_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_HOST_PORT:-15672}:15672" # Management UI
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
@@ -90,6 +90,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:cloudpulse-dev-password@db:5432/cloudpulse
       REDIS_URL: redis://redis:6379/0
       RABBITMQ_URL: amqp://cloudpulse:cloudpulse-dev-password@rabbitmq:5672/
+      ML_SERVICE_URL: http://ml-service:8000
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-cloudpulse-dev-internal-token}
       ENVIRONMENT: development
       DEBUG: "true"
       CLOUD_SYNC_MODE: demo
@@ -115,9 +117,6 @@ services:
         condition: service_completed_successfully
       otel-collector:
         condition: service_started
-    volumes:
-      - ./services/cost-service/app:/app/app:ro
-      - ./services/cost-service/scripts:/app/scripts:ro
     deploy:
       resources:
         limits:
@@ -141,6 +140,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:cloudpulse-dev-password@db:5432/cloudpulse
       REDIS_URL: redis://redis:6379/0
       RABBITMQ_URL: amqp://cloudpulse:cloudpulse-dev-password@rabbitmq:5672/
+      ML_SERVICE_URL: http://ml-service:8000
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-cloudpulse-dev-internal-token}
       ENVIRONMENT: development
       CLOUD_SYNC_MODE: demo
       ALLOW_LIVE_CLOUD_SYNC: "false"
@@ -161,9 +162,6 @@ services:
         condition: service_completed_successfully
       otel-collector:
         condition: service_started
-    volumes:
-      - ./services/cost-service/app:/app/app:ro
-      - ./services/cost-service/scripts:/app/scripts:ro
     deploy:
       resources:
         limits:
@@ -182,6 +180,7 @@ services:
     container_name: cloudpulse-ml-service
     environment:
       COST_SERVICE_URL: http://cost-service:8000
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-cloudpulse-dev-internal-token}
       REDIS_URL: redis://redis:6379/1
       RABBITMQ_URL: amqp://cloudpulse:cloudpulse-dev-password@rabbitmq:5672/
       ENVIRONMENT: development
@@ -197,7 +196,6 @@ services:
       otel-collector:
         condition: service_started
     volumes:
-      - ./services/ml-service/app:/app/app:ro
       - ml_models:/app/models
     deploy:
       resources:
@@ -321,6 +319,7 @@ services:
     ports:
       - "4317:4317"
       - "4318:4318"
+      - "13133:13133"
     restart: unless-stopped
 
   # Grafana

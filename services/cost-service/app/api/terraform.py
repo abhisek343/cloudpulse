@@ -2,9 +2,14 @@
 CloudPulse AI - Cost Service
 Terraform cost estimation API endpoints.
 """
-from fastapi import APIRouter, HTTPException
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from app.api.auth import get_current_user
+from app.core.logging import sanitize_error
+from app.models import User
 from app.services.terraform_service import estimate_plan, get_supported_resources
 
 router = APIRouter()
@@ -46,16 +51,21 @@ class SupportedResource(BaseModel):
 
 
 @router.post("/estimate", response_model=TerraformEstimateResponse)
-async def estimate_terraform_plan(request: TerraformPlanRequest):
+async def estimate_terraform_plan(
+    request: TerraformPlanRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+):
     """Estimate monthly costs from a Terraform plan JSON."""
     try:
         result = estimate_plan(request.plan_json)
         return result
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to parse plan: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to parse plan: {sanitize_error(e)}")
 
 
 @router.get("/supported-resources", response_model=list[SupportedResource])
-async def list_supported_resources():
+async def list_supported_resources(
+    current_user: Annotated[User, Depends(get_current_user)],
+):
     """List all Terraform resource types supported for cost estimation."""
     return get_supported_resources()

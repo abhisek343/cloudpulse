@@ -98,9 +98,16 @@ export default function CostsPage() {
     const regionCosts = regionCostsResult?.success ? regionCostsResult.data : [];
     const reconciliation = reconciliationResult?.success ? reconciliationResult.data : null;
 
-    const totalCost = Number(summary?.total_cost || 0);
+    const currency = summary?.currency || null;
+    const mixedCurrencies = Object.keys(summary?.currency_totals || {}).length > 1;
+    const totalCost = currency ? Number(summary?.total_cost || 0) : 0;
     const avgDailyCost = days > 0 ? totalCost / days : 0;
-    const topService = serviceCosts[0] || { service: "N/A", total_cost: 0 };
+    const topService = serviceCosts[0] || { service: "N/A", total_cost: 0, currency: currency || "USD" };
+    const formattedTotal = mixedCurrencies
+        ? "Multiple currencies"
+        : currency
+            ? formatCurrency(totalCost, currency)
+            : "No data";
     const activeFilters = filterSummary(filters);
 
     const businessUnits = uniqueSorted(accounts.map((account) => account.business_unit));
@@ -266,19 +273,19 @@ export default function CostsPage() {
             <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
                 <Card
                     title="Total Cost"
-                    value={formatCurrency(totalCost)}
-                    subtitle={`Last ${selectedRange} days`}
+                    value={formattedTotal}
+                    subtitle={mixedCurrencies ? Object.entries(summary?.currency_totals || {}).map(([code, value]) => `${code} ${Number(value).toFixed(2)}`).join(" · ") : `Last ${selectedRange} days`}
                     icon={<Wallet className="h-5 w-5" />}
                 />
                 <Card
                     title="Average Daily"
-                    value={formatCurrency(avgDailyCost)}
+                    value={currency ? formatCurrency(avgDailyCost, currency) : "—"}
                     icon={<Calendar className="h-5 w-5" />}
                 />
                 <Card
                     title="Top Service"
                     value={topService.service}
-                    subtitle={formatCurrency(topService.total_cost)}
+                    subtitle={formatCurrency(topService.total_cost, topService.currency || currency || "USD")}
                     icon={<Filter className="h-5 w-5" />}
                 />
                 <Card
@@ -288,6 +295,12 @@ export default function CostsPage() {
                     icon={<Filter className="h-5 w-5" />}
                 />
             </div>
+
+            {mixedCurrencies && (
+                <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+                    Portfolio totals are grouped by currency and are intentionally not summed. Select an account or provider with one currency to unlock percentages, forecasts, and anomaly detection.
+                </div>
+            )}
 
             <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
                 <ChartCard title="Account Reconciliation">
@@ -321,16 +334,16 @@ export default function CostsPage() {
                             <div className="grid gap-3 sm:grid-cols-3">
                                 <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
                                     <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Imported total</p>
-                                    <p className="mt-2 text-lg font-semibold text-white">{formatCurrency(Number(reconciliation.imported_total))}</p>
+                                    <p className="mt-2 text-lg font-semibold text-white">{formatCurrency(Number(reconciliation.imported_total), reconciliation.currency || "USD")}</p>
                                 </div>
                                 <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
                                     <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Provider total</p>
-                                    <p className="mt-2 text-lg font-semibold text-white">{formatCurrency(Number(reconciliation.provider_total))}</p>
+                                    <p className="mt-2 text-lg font-semibold text-white">{formatCurrency(Number(reconciliation.provider_total), reconciliation.currency || "USD")}</p>
                                 </div>
                                 <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
                                     <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Variance</p>
                                     <p className={`mt-2 text-lg font-semibold ${Math.abs(Number(reconciliation.variance_amount)) <= 1 ? "text-emerald-300" : "text-amber-200"}`}>
-                                        {formatCurrency(Number(reconciliation.variance_amount))} ({Number(reconciliation.variance_percent).toFixed(2)}%)
+                                        {formatCurrency(Number(reconciliation.variance_amount), reconciliation.currency || "USD")} ({Number(reconciliation.variance_percent).toFixed(2)}%)
                                     </p>
                                 </div>
                             </div>
@@ -388,7 +401,7 @@ export default function CostsPage() {
                                     <div className={`h-3 w-3 rounded-full ${REGION_COLOR_CLASSES[index % REGION_COLOR_CLASSES.length]}`} />
                                     <span className="text-slate-400">{region.region}</span>
                                 </div>
-                                <span className="font-medium text-white">{formatCurrency(region.total_cost)}</span>
+                                <span className="font-medium text-white">{formatCurrency(region.total_cost, region.currency || currency || "USD")}</span>
                             </div>
                         ))}
                     </div>
@@ -410,9 +423,9 @@ export default function CostsPage() {
                             {serviceCosts.map((service) => (
                                 <tr key={service.service} className="border-b border-slate-900">
                                     <td className="py-3 font-medium text-white">{service.service}</td>
-                                    <td className="py-3 text-right text-white">{formatCurrency(service.total_cost)}</td>
+                                    <td className="py-3 text-right text-white">{formatCurrency(service.total_cost, service.currency || currency || "USD")}</td>
                                     <td className="py-3 text-right text-slate-400">
-                                        {totalCost > 0 ? ((service.total_cost / totalCost) * 100).toFixed(1) : "0.0"}%
+                                        {!mixedCurrencies && totalCost > 0 ? ((service.total_cost / totalCost) * 100).toFixed(1) : "—"}
                                     </td>
                                     <td className="py-3 text-right text-slate-400">{service.record_count}</td>
                                 </tr>

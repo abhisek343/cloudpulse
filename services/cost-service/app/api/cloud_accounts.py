@@ -8,7 +8,7 @@ from uuid import UUID
 
 import boto3
 from anyio import to_thread
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,8 +16,9 @@ from app.api.auth import get_current_user
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.events import publish_sync_task
+from app.core.logging import sanitize_error
 from app.core.security import encrypt_credentials
-from app.models import CloudAccount, User
+from app.models import CloudAccount, SyncTask, User
 from app.schemas import (
     CloudAccountDetectRequest,
     CloudAccountDetectResponse,
@@ -26,6 +27,7 @@ from app.schemas import (
     CloudAccountStatusResponse,
     CloudAccountUpdate,
     PaginatedResponse,
+    SyncTaskResponse,
 )
 from app.services.providers.azure import AzureProvider
 from app.services.providers.gcp import GCPProvider
@@ -87,6 +89,13 @@ async def build_cloud_account_status(
         ).where(CostRecord.cloud_account_id == account.id)
     )
     row = summary.one()
+    task_result = await db.execute(
+        select(SyncTask)
+        .where(SyncTask.cloud_account_id == account.id)
+        .order_by(SyncTask.queued_at.desc())
+        .limit(1)
+    )
+    latest_task = task_result.scalar_one_or_none()
 
     return CloudAccountStatusResponse(
         account_id=account.id,
@@ -102,6 +111,9 @@ async def build_cloud_account_status(
         coverage_end=row.coverage_end,
         services_detected=row.services_detected or 0,
         currency=row.currency,
+        latest_task_id=latest_task.id if latest_task else None,
+        latest_task_status=latest_task.status if latest_task else None,
+        latest_task_error=latest_task.error if latest_task else None,
     )
 
 
@@ -273,7 +285,15 @@ async def create_cloud_account(
             detail=f"Account {account_data.account_id} already exists for provider {account_data.provider}",
         )
     
-    # Create account
+    try:
+        encrypted_credentials = encrypt_credentials(account_data.credentials)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=sanitize_error(exc),
+        ) from exc
+
+    # Create account only after credential policy validation succeeds.
     account = CloudAccount(
         organization_id=current_user.organization_id,
         provider=account_data.provider.value,
@@ -282,7 +302,7 @@ async def create_cloud_account(
         business_unit=account_data.business_unit,
         environment=account_data.environment,
         cost_center=account_data.cost_center,
-        credentials=encrypt_credentials(account_data.credentials),
+        credentials=encrypted_credentials,
     )
     db.add(account)
     await db.flush()
@@ -305,7 +325,7 @@ async def detect_cloud_account(
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"CloudPulse could not detect the account from the provided settings: {exc}",
+            detail=f"CloudPulse could not detect the account from the provided settings: {sanitize_error(exc)}",
         ) from exc
 
 
@@ -357,7 +377,13 @@ async def update_cloud_account(
     update_dict = update_data.model_dump(exclude_unset=True)
     for field, value in update_dict.items():
         if field == "credentials":
-            value = encrypt_credentials(value)
+            try:
+                value = encrypt_credentials(value)
+            except RuntimeError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=sanitize_error(exc),
+                ) from exc
         setattr(account, field, value)
     
     await db.flush()
@@ -384,33 +410,95 @@ async def delete_cloud_account(
 @router.post("/{account_id}/sync", status_code=status.HTTP_202_ACCEPTED)
 async def trigger_cost_sync(
     account_id: str,
-    background_tasks: BackgroundTasks,
     current_user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Trigger a cost data sync for a cloud account."""
+    """Create and publish a sync task, reporting broker failures to the caller."""
     account = await get_cloud_account_or_404(
         db,
         account_id=account_id,
         organization_id=current_user.organization_id,
     )
-    normalized_account_id = account.id
+    now = datetime.now(UTC)
     account.last_sync_status = "queued"
     account.last_sync_error = None
-    account.last_sync_started_at = datetime.now(UTC)
+    account.last_sync_started_at = None
     account.last_sync_completed_at = None
     account.last_sync_records_imported = None
+    sync_task = SyncTask(
+        organization_id=current_user.organization_id,
+        cloud_account_id=account.id,
+        status="queued",
+        max_attempts=settings.sync_max_attempts,
+        queued_at=now,
+    )
+    db.add(sync_task)
+    await db.flush()
+    await db.commit()
 
-    # Publish sync task to RabbitMQ
     task = {
         "type": "sync_account",
-        "account_id": normalized_account_id,
-        "days": 30
+        "task_id": sync_task.id,
+        "organization_id": current_user.organization_id,
+        "account_id": account.id,
+        "days": 30,
+        "attempt": 0,
     }
-    background_tasks.add_task(publish_sync_task, task)
+    try:
+        await publish_sync_task(task)
+    except Exception as exc:
+        safe_error = sanitize_error(exc)
+        sync_task.status = "failed"
+        sync_task.error = safe_error
+        sync_task.completed_at = datetime.now(UTC)
+        account.last_sync_status = "failed"
+        account.last_sync_error = safe_error
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to queue cost sync. The task was marked failed; please retry.",
+        ) from exc
 
     return {
-        "message": "Cost sync initiated",
-        "account_id": normalized_account_id,
-        "status": "pending",
+        "message": "Cost sync queued",
+        "task_id": sync_task.id,
+        "account_id": account.id,
+        "status": sync_task.status,
     }
+
+
+@router.get("/{account_id}/sync/{task_id}", response_model=SyncTaskResponse)
+async def get_sync_task(
+    account_id: str,
+    task_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: AsyncSession = Depends(get_db),
+) -> SyncTaskResponse:
+    """Return one sync task only when it belongs to the caller's tenant and account."""
+    account = await get_cloud_account_or_404(
+        db,
+        account_id=account_id,
+        organization_id=current_user.organization_id,
+    )
+    result = await db.execute(
+        select(SyncTask).where(
+            SyncTask.id == task_id,
+            SyncTask.cloud_account_id == account.id,
+            SyncTask.organization_id == current_user.organization_id,
+        )
+    )
+    sync_task = result.scalar_one_or_none()
+    if not sync_task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sync task not found")
+    return SyncTaskResponse(
+        task_id=sync_task.id,
+        account_id=sync_task.cloud_account_id,
+        status=sync_task.status,
+        attempt=sync_task.attempt,
+        max_attempts=sync_task.max_attempts,
+        error=sync_task.error,
+        records_imported=sync_task.records_imported,
+        queued_at=sync_task.queued_at,
+        started_at=sync_task.started_at,
+        completed_at=sync_task.completed_at,
+    )

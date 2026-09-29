@@ -23,16 +23,55 @@ PBKDF2_ITERATIONS = 600_000
 PBKDF2_ALGORITHM = "sha256"
 HASH_PREFIX = "pbkdf2_sha256"
 
+SENSITIVE_CREDENTIAL_KEYS = frozenset(
+    {
+        "access_key_id",
+        "secret_access_key",
+        "session_token",
+        "client_secret",
+        "service_account_json",
+        "service_account_file",
+        "api_key",
+        "token",
+        "password",
+    }
+)
+
+
+def _contains_sensitive_credentials(credentials: dict[str, Any]) -> bool:
+    return any(key.lower() in SENSITIVE_CREDENTIAL_KEYS for key in credentials)
+
+
+def _without_sensitive_credentials(credentials: dict[str, Any]) -> dict[str, Any]:
+    """Keep demo metadata while ensuring unexpected secrets are never stored plaintext."""
+    return {
+        key: value
+        for key, value in credentials.items()
+        if key.lower() not in SENSITIVE_CREDENTIAL_KEYS
+    }
+
+
+def _is_live_credential_context(credentials: dict[str, Any]) -> bool:
+    mode = str(credentials.get("mode", settings.cloud_sync_mode)).lower()
+    return mode == "live" or settings.cloud_sync_mode == "live"
+
 
 def _get_credentials_fernet() -> Fernet | None:
     """Return a Fernet instance when credential encryption is configured."""
     if not settings.account_credentials_key:
         return None
 
-    return Fernet(settings.account_credentials_key.encode("utf-8"))
+    try:
+        return Fernet(settings.account_credentials_key.encode("utf-8"))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("ACCOUNT_CREDENTIALS_KEY is invalid.") from exc
 
 
-def create_access_token(subject: str | Any, expires_delta: timedelta | None = None) -> str:
+def create_access_token(
+    subject: str | Any,
+    expires_delta: timedelta | None = None,
+    organization_id: str | None = None,
+) -> str:
     """Create a JWT access token."""
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
@@ -49,6 +88,8 @@ def create_access_token(subject: str | Any, expires_delta: timedelta | None = No
         "sub": str(subject),
         "type": "access",
     }
+    if organization_id:
+        to_encode["organization_id"] = str(organization_id)
     encoded_jwt = jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
     return encoded_jwt
 
@@ -57,6 +98,7 @@ def create_refresh_token(
     subject: str | Any,
     csrf_token: str,
     expires_delta: timedelta | None = None,
+    organization_id: str | None = None,
 ) -> str:
     """Create a JWT refresh token."""
     if expires_delta:
@@ -75,6 +117,8 @@ def create_refresh_token(
         "type": "refresh",
         "csrf": csrf_token,
     }
+    if organization_id:
+        to_encode["organization_id"] = str(organization_id)
     return jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
@@ -144,13 +188,17 @@ def get_password_hash(password: str) -> str:
 
 
 def encrypt_credentials(credentials: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Encrypt provider credentials when a credentials key is configured."""
+    """Encrypt provider credentials, failing closed for live configurations."""
     if credentials is None:
         return None
 
     fernet = _get_credentials_fernet()
     if fernet is None:
-        return credentials
+        if _is_live_credential_context(credentials) and credentials:
+            raise RuntimeError(
+                "ACCOUNT_CREDENTIALS_KEY is required before storing live provider credentials."
+            )
+        return _without_sensitive_credentials(credentials)
 
     payload = json.dumps(credentials).encode("utf-8")
     ciphertext = fernet.encrypt(payload).decode("utf-8")
@@ -163,7 +211,11 @@ def decrypt_credentials(credentials: dict[str, Any] | None) -> dict[str, Any]:
         return {}
 
     if not credentials.get("_encrypted"):
-        return credentials
+        if _is_live_credential_context(credentials) and _contains_sensitive_credentials(credentials):
+            raise RuntimeError(
+                "Stored live provider credentials are not encrypted; refusing to use them."
+            )
+        return _without_sensitive_credentials(credentials)
 
     fernet = _get_credentials_fernet()
     if fernet is None:
@@ -180,7 +232,10 @@ def decrypt_credentials(credentials: dict[str, Any] | None) -> dict[str, Any]:
     except InvalidToken as exc:
         raise RuntimeError("Unable to decrypt stored account credentials.") from exc
 
-    data = json.loads(plaintext.decode("utf-8"))
+    try:
+        data = json.loads(plaintext.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Decrypted credentials payload is malformed.") from exc
     if not isinstance(data, dict):
         raise RuntimeError("Decrypted credentials payload is malformed.")
 

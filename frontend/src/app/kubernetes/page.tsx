@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { getNamespaceCosts, getPodCosts, getNamespaceTrend, getLabelCosts } from "@/lib/api";
 import { Card, ChartCard } from "@/components/ui/card";
 import { K8sTreemap } from "@/components/charts/k8s-treemap";
-import { AlertCircle, Server, Layers, DollarSign, Activity, ChevronDown, ChevronRight, Cpu, HardDrive, Network, Tag } from "lucide-react";
+import { AlertCircle, Server, Layers, DollarSign, ChevronDown, ChevronRight, Cpu, HardDrive, Tag } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, Legend, CartesianGrid } from "recharts";
 

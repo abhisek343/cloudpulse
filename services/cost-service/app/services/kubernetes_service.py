@@ -9,6 +9,7 @@ from typing import Any
 from anyio import to_thread
 from prometheus_api_client import PrometheusConnect
 from app.core.config import get_settings
+from app.core.logging import sanitize_error
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -45,7 +46,7 @@ class KubernetesService:
         try:
             return await to_thread.run_sync(lambda: self.prom.check_prometheus_connection())
         except Exception as e:
-            logger.warning(f"Prometheus connection check failed: {e}")
+            logger.warning("Prometheus connection check failed: %s", sanitize_error(e))
             return False
 
     # ------------------------------------------------------------------
@@ -118,7 +119,7 @@ class KubernetesService:
             return sorted(costs, key=lambda x: x["cost"], reverse=True)
 
         except Exception as e:
-            logger.error(f"Error querying Prometheus: {e}")
+            logger.error("Error querying Prometheus: %s", sanitize_error(e))
             return self._get_mock_data()
 
     # ------------------------------------------------------------------
@@ -179,7 +180,7 @@ class KubernetesService:
             return sorted(pods, key=lambda x: x["cost"], reverse=True)
 
         except Exception as e:
-            logger.error(f"Error querying pod costs: {e}")
+            logger.error("Error querying pod costs: %s", sanitize_error(e))
             return self._get_mock_pod_data(namespace)
 
     # ------------------------------------------------------------------
@@ -244,7 +245,7 @@ class KubernetesService:
             return trend
 
         except Exception as e:
-            logger.error(f"Error querying namespace trend: {e}")
+            logger.error("Error querying namespace trend: %s", sanitize_error(e))
             return self._get_mock_trend_data(days)
 
     # ------------------------------------------------------------------
@@ -302,7 +303,7 @@ class KubernetesService:
             return sorted(items, key=lambda x: x["cost"], reverse=True)
 
         except Exception as e:
-            logger.error(f"Error querying label costs: {e}")
+            logger.error("Error querying label costs: %s", sanitize_error(e))
             return self._get_mock_label_data(label)
 
     # ------------------------------------------------------------------

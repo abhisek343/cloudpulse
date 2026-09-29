@@ -24,7 +24,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.core.config import get_settings  # noqa: E402
 from app.core.security import get_password_hash  # noqa: E402
-from app.models import Base, CloudAccount, CostRecord, Organization, User  # noqa: E402
+from app.models import CloudAccount, CostRecord, Organization, User  # noqa: E402
 from app.services.demo_seed import (  # noqa: E402
     DEFAULT_DEMO_ACCOUNT_ID,
     DEFAULT_DEMO_ACCOUNT_NAME,
@@ -72,10 +72,8 @@ def parse_args() -> argparse.Namespace:
 
 
 async def ensure_schema() -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
-    """Ensure database schema exists and return a session factory."""
+    """Connect to the already-migrated database and return a session factory."""
     engine = create_async_engine(str(settings.database_url), echo=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
     return engine, async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 

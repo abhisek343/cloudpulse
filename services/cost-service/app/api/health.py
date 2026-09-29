@@ -11,10 +11,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import get_current_user
 from app.core.cache import RedisCache, get_cache
 from app.core.circuit_breaker import breaker_status
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.logging import sanitize_error
+from app.core.rate_limit import auth_rate_limit
 from app.schemas import (
     HealthCheck,
     ProviderPreflightCheck,
@@ -26,6 +29,7 @@ from app.services.providers.aws import AWSCostProvider
 from app.services.providers.azure import AzureProvider
 from app.services.providers.gcp import GCPProvider
 from app.services.llm_service import is_external_llm_provider
+from app.models import User
 
 router = APIRouter()
 settings = get_settings()
@@ -253,7 +257,11 @@ async def runtime_status() -> RuntimeStatus:
 
 
 @router.get("/preflight/{provider}", response_model=ProviderPreflightResult)
-async def provider_preflight(provider: str) -> ProviderPreflightResult:
+async def provider_preflight(
+    provider: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    _: Annotated[None, Depends(auth_rate_limit("provider_preflight"))],
+) -> ProviderPreflightResult:
     """Run an actionable live-provider preflight for OSS operators."""
     provider_name = provider.lower()
     provider_class = LIVE_PROVIDER_CLASSES.get(provider_name)
@@ -298,7 +306,7 @@ async def provider_preflight(provider: str) -> ProviderPreflightResult:
             ProviderPreflightCheck(
                 name="live_connection",
                 status="failed",
-                detail=str(exc),
+                detail=sanitize_error(exc),
             )
         )
         return ProviderPreflightResult(

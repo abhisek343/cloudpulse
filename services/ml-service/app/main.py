@@ -77,7 +77,7 @@ async def health_check() -> dict:
     from app.services import get_detector, get_predictor
     
     predictor = get_predictor()
-    detector = get_detector()
+    detector = get_detector("__health__")
     
     return {
         "status": "healthy",

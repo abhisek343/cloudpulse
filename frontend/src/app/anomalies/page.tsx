@@ -1,227 +1,161 @@
 "use client";
 
-import { AlertTriangle, CheckCircle, XCircle, Clock } from "lucide-react";
+import { AlertTriangle, Database, Loader2, ShieldAlert } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+
 import { Card, ChartCard } from "@/components/ui/card";
+import { getAnomalies, getCostTrend, CostTrendPoint } from "@/lib/api";
 import { formatCurrency, getSeverityColor } from "@/lib/utils";
 
-// Mock anomaly data
-const mockAnomalies = [
-    {
-        id: "1",
-        date: "2026-01-10",
-        service: "Amazon EC2",
-        actual_cost: 245.32,
-        expected_cost: 168.45,
-        deviation_percent: 45.6,
-        severity: "high" as const,
-        status: "open",
-        region: "us-east-1",
-    },
-    {
-        id: "2",
-        date: "2026-01-09",
-        service: "Amazon RDS",
-        actual_cost: 89.21,
-        expected_cost: 72.15,
-        deviation_percent: 23.7,
-        severity: "medium" as const,
-        status: "acknowledged",
-        region: "us-west-2",
-    },
-    {
-        id: "3",
-        date: "2026-01-08",
-        service: "AWS Lambda",
-        actual_cost: 34.56,
-        expected_cost: 28.90,
-        deviation_percent: 19.6,
-        severity: "low" as const,
-        status: "resolved",
-        region: "us-east-1",
-    },
-    {
-        id: "4",
-        date: "2026-01-07",
-        service: "Amazon S3",
-        actual_cost: 156.78,
-        expected_cost: 98.45,
-        deviation_percent: 59.2,
-        severity: "critical" as const,
-        status: "open",
-        region: "eu-west-1",
-    },
-];
-
-const statusIcon = {
-    open: <AlertTriangle className="h-4 w-4 text-yellow-400" />,
-    acknowledged: <Clock className="h-4 w-4 text-blue-400" />,
-    resolved: <CheckCircle className="h-4 w-4 text-green-400" />,
-    false_positive: <XCircle className="h-4 w-4 text-gray-400" />,
+type Anomaly = {
+    date: string;
+    actual_cost: number;
+    expected_cost: number;
+    deviation_percent: number;
+    severity: "low" | "medium" | "high" | "critical";
+    anomaly_score: number;
+    service?: string | null;
+    currency?: string;
 };
 
 export default function AnomaliesPage() {
-    const openCount = mockAnomalies.filter((a) => a.status === "open").length;
-    const criticalCount = mockAnomalies.filter((a) => a.severity === "critical").length;
-    const resolvedCount = mockAnomalies.filter((a) => a.status === "resolved").length;
+    const { data: historyResult, isLoading: isHistoryLoading } = useQuery({
+        queryKey: ["costTrend", "anomalies", 30],
+        queryFn: () => getCostTrend(30),
+    });
+    const historicalData: CostTrendPoint[] = historyResult?.success ? historyResult.data : [];
+    const currencies = [...new Set(historicalData.map((point) => point.currency || "UNKNOWN"))];
+    const currency = currencies.length === 1 ? currencies[0] : null;
+
+    const { data: anomalyResult, isLoading: isAnomalyLoading } = useQuery({
+        queryKey: ["anomalies", historicalData],
+        queryFn: () => getAnomalies(
+            historicalData.map((point) => ({
+                date: point.date,
+                amount: point.amount,
+                currency: point.currency,
+            })),
+        ),
+        enabled: historicalData.length > 0 && currencies.length === 1,
+    });
+    const anomalies: Anomaly[] = anomalyResult?.success ? anomalyResult.data.anomalies || [] : [];
+    const error = historyResult && !historyResult.success
+        ? historyResult.error
+        : anomalyResult && !anomalyResult.success
+            ? anomalyResult.error
+            : null;
+    const isLoading = isHistoryLoading || isAnomalyLoading;
+    const criticalCount = anomalies.filter((anomaly) => anomaly.severity === "critical").length;
+    const highCount = anomalies.filter((anomaly) => anomaly.severity === "high").length;
+
+    if (isLoading) {
+        return (
+            <div className="flex h-[50vh] items-center justify-center gap-3 text-slate-400">
+                <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+                Loading tenant-scoped anomaly results...
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-6 p-6">
-            {/* Page Title */}
             <div>
                 <h2 className="text-2xl font-bold text-white">Anomaly Detection</h2>
-                <p className="text-gray-400">ML-powered cost anomaly detection using Isolation Forest</p>
+                <p className="text-gray-400">Live tenant-scoped results from the Isolation Forest API.</p>
             </div>
 
-            {/* Stats Cards */}
+            {error && (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+                    {error}
+                </div>
+            )}
+
+            {currencies.length > 1 && (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+                    Anomaly detection is paused because this view contains multiple currencies ({currencies.join(", ")}).
+                    Filter to one currency before running ML inference.
+                </div>
+            )}
+
+            {!error && historicalData.length === 0 && (
+                <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-6 text-sm text-slate-400">
+                    No cost history is available for this tenant yet.
+                </div>
+            )}
+
             <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
                 <Card
-                    title="Total Anomalies"
-                    value={mockAnomalies.length.toString()}
-                    subtitle="Last 7 days"
+                    title="Detected Anomalies"
+                    value={anomalies.length.toString()}
+                    subtitle="Current history window"
                     icon={<AlertTriangle className="h-5 w-5" />}
                 />
                 <Card
-                    title="Open Issues"
-                    value={openCount.toString()}
-                    subtitle="Needs attention"
-                    icon={<Clock className="h-5 w-5" />}
-                    className="border-yellow-500/30"
-                />
-                <Card
-                    title="Critical"
-                    value={criticalCount.toString()}
-                    subtitle="High priority"
-                    icon={<XCircle className="h-5 w-5" />}
+                    title="High / Critical"
+                    value={(highCount + criticalCount).toString()}
+                    subtitle={`${criticalCount} critical`}
+                    icon={<ShieldAlert className="h-5 w-5" />}
                     className="border-red-500/30"
                 />
                 <Card
-                    title="Resolved"
-                    value={resolvedCount.toString()}
-                    subtitle="Fixed"
-                    icon={<CheckCircle className="h-5 w-5" />}
-                    className="border-green-500/30"
+                    title="Records Analyzed"
+                    value={historicalData.length.toString()}
+                    subtitle="Backend data points"
+                    icon={<Database className="h-5 w-5" />}
+                />
+                <Card
+                    title="Currency"
+                    value={currency || (currencies.length ? "Mixed" : "—")}
+                    subtitle="Inference denomination"
+                    icon={<Database className="h-5 w-5" />}
                 />
             </div>
 
-            {/* Anomalies Table */}
             <ChartCard title="Detected Anomalies">
-                <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                        <thead>
-                            <tr className="border-b border-gray-700">
-                                <th className="py-3 text-left font-medium text-gray-400">Date</th>
-                                <th className="py-3 text-left font-medium text-gray-400">Service</th>
-                                <th className="py-3 text-left font-medium text-gray-400">Region</th>
-                                <th className="py-3 text-right font-medium text-gray-400">Expected</th>
-                                <th className="py-3 text-right font-medium text-gray-400">Actual</th>
-                                <th className="py-3 text-right font-medium text-gray-400">Deviation</th>
-                                <th className="py-3 text-center font-medium text-gray-400">Severity</th>
-                                <th className="py-3 text-center font-medium text-gray-400">Status</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {mockAnomalies.map((anomaly) => (
-                                <tr
-                                    key={anomaly.id}
-                                    className="border-b border-gray-800 hover:bg-gray-800/50 transition-colors cursor-pointer"
-                                >
-                                    <td className="py-4 text-white">
-                                        {new Date(anomaly.date).toLocaleDateString("en-US", {
-                                            month: "short",
-                                            day: "numeric",
-                                        })}
-                                    </td>
-                                    <td className="py-4">
-                                        <div className="font-medium text-white">{anomaly.service}</div>
-                                    </td>
-                                    <td className="py-4 text-gray-400">{anomaly.region}</td>
-                                    <td className="py-4 text-right text-gray-400">
-                                        {formatCurrency(anomaly.expected_cost)}
-                                    </td>
-                                    <td className="py-4 text-right font-medium text-white">
-                                        {formatCurrency(anomaly.actual_cost)}
-                                    </td>
-                                    <td className="py-4 text-right">
-                                        <span className="text-red-400">+{anomaly.deviation_percent.toFixed(1)}%</span>
-                                    </td>
-                                    <td className="py-4 text-center">
-                                        <span
-                                            className={`inline-flex rounded-full px-2 py-1 text-xs font-medium capitalize ${getSeverityColor(
-                                                anomaly.severity
-                                            )}`}
-                                        >
-                                            {anomaly.severity}
-                                        </span>
-                                    </td>
-                                    <td className="py-4">
-                                        <div className="flex items-center justify-center gap-2">
-                                            {statusIcon[anomaly.status as keyof typeof statusIcon]}
-                                            <span className="text-gray-400 capitalize">{anomaly.status}</span>
-                                        </div>
-                                    </td>
+                {anomalies.length === 0 ? (
+                    <p className="p-4 text-sm text-gray-400">
+                        {historicalData.length ? "No anomalies were returned for the current tenant and history window." : "Add cost history to run detection."}
+                    </p>
+                ) : (
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead>
+                                <tr className="border-b border-gray-700">
+                                    <th className="py-3 text-left font-medium text-gray-400">Date</th>
+                                    <th className="py-3 text-left font-medium text-gray-400">Service</th>
+                                    <th className="py-3 text-right font-medium text-gray-400">Expected</th>
+                                    <th className="py-3 text-right font-medium text-gray-400">Actual</th>
+                                    <th className="py-3 text-right font-medium text-gray-400">Deviation</th>
+                                    <th className="py-3 text-center font-medium text-gray-400">Severity</th>
+                                    <th className="py-3 text-center font-medium text-gray-400">State</th>
                                 </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
+                            </thead>
+                            <tbody>
+                                {anomalies.map((anomaly) => (
+                                    <tr key={`${anomaly.date}-${anomaly.service}-${anomaly.anomaly_score}`} className="border-b border-gray-800">
+                                        <td className="py-4 text-white">
+                                            {new Date(anomaly.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                                        </td>
+                                        <td className="py-4 font-medium text-white">{anomaly.service || "Unknown"}</td>
+                                        <td className="py-4 text-right text-gray-400">{formatCurrency(anomaly.expected_cost, anomaly.currency || currency || "USD")}</td>
+                                        <td className="py-4 text-right font-medium text-white">{formatCurrency(anomaly.actual_cost, anomaly.currency || currency || "USD")}</td>
+                                        <td className="py-4 text-right text-red-400">{anomaly.deviation_percent.toFixed(1)}%</td>
+                                        <td className="py-4 text-center">
+                                            <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium capitalize ${getSeverityColor(anomaly.severity)}`}>
+                                                {anomaly.severity}
+                                            </span>
+                                        </td>
+                                        <td className="py-4 text-center text-gray-400">detected</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
             </ChartCard>
 
-            {/* Detection Info */}
-            <div className="grid gap-6 lg:grid-cols-2">
-                <div className="rounded-xl bg-gradient-to-br from-gray-900 to-gray-800 p-6 border border-gray-700">
-                    <h4 className="font-semibold text-white">How Anomaly Detection Works</h4>
-                    <ul className="mt-4 space-y-3 text-sm text-gray-400">
-                        <li className="flex items-start gap-2">
-                            <span className="text-blue-400">•</span>
-                            Uses Isolation Forest algorithm to detect outliers
-                        </li>
-                        <li className="flex items-start gap-2">
-                            <span className="text-blue-400">•</span>
-                            Analyzes daily cost patterns and rolling averages
-                        </li>
-                        <li className="flex items-start gap-2">
-                            <span className="text-blue-400">•</span>
-                            Considers day-of-week and month-end effects
-                        </li>
-                        <li className="flex items-start gap-2">
-                            <span className="text-blue-400">•</span>
-                            Automatically adjusts sensitivity over time
-                        </li>
-                    </ul>
-                </div>
-
-                <div className="rounded-xl bg-gradient-to-br from-gray-900 to-gray-800 p-6 border border-gray-700">
-                    <h4 className="font-semibold text-white">Severity Levels</h4>
-                    <div className="mt-4 space-y-3">
-                        <div className="flex items-center gap-3">
-                            <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-red-500/20 text-red-400">
-                                <AlertTriangle className="h-4 w-4" />
-                            </span>
-                            <div>
-                                <p className="font-medium text-white">Critical (&gt;50% deviation)</p>
-                                <p className="text-sm text-gray-400">Requires immediate attention</p>
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                            <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-orange-500/20 text-orange-400">
-                                <AlertTriangle className="h-4 w-4" />
-                            </span>
-                            <div>
-                                <p className="font-medium text-white">High (30-50% deviation)</p>
-                                <p className="text-sm text-gray-400">Should be investigated soon</p>
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                            <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-yellow-500/20 text-yellow-400">
-                                <AlertTriangle className="h-4 w-4" />
-                            </span>
-                            <div>
-                                <p className="font-medium text-white">Medium (15-30% deviation)</p>
-                                <p className="text-sm text-gray-400">Worth monitoring</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-6 text-sm text-gray-400">
+                Detection state is computed from the current tenant’s API data. CloudPulse does not invent open/resolved workflow states until an alert lifecycle is persisted by the backend.
             </div>
         </div>
     );

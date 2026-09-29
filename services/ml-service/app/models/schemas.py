@@ -6,7 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # === Request Schemas ===
@@ -15,8 +15,18 @@ class CostDataPoint(BaseModel):
     """Single cost data point for training/prediction."""
     date: datetime
     amount: Decimal = Field(..., ge=0)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
     service: str | None = None
+
     region: str | None = None
+
+    @field_validator("currency")
+    @classmethod
+    def normalize_currency(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if len(normalized) != 3 or not normalized.isalpha():
+            raise ValueError("currency must be a three-letter ISO code")
+        return normalized
 
 
 class TrainRequest(BaseModel):
@@ -63,11 +73,13 @@ class PredictionPoint(BaseModel):
 
 
 class PredictionSummary(BaseModel):
-    """Summary of predictions."""
+    """Summary of predictions with explicit denomination and backend."""
     total_predicted_cost: float
     average_daily_cost: float
     forecast_days: int
     confidence_level: float
+    currency: str = "USD"
+    model: str | None = None
 
 
 class PredictResponse(BaseModel):
@@ -87,6 +99,7 @@ class AnomalyRecord(BaseModel):
     severity: Literal["low", "medium", "high", "critical"]
     anomaly_score: float
     service: str | None = None
+    currency: str = "USD"
 
 
 class DetectResponse(BaseModel):

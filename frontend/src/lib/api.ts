@@ -1,4 +1,4 @@
-import axios, { AxiosHeaders, AxiosInstance } from "axios";
+import axios, { AxiosHeaders, AxiosInstance, AxiosResponse } from "axios";
 
 function readCsrfToken(): string | null {
     if (typeof document === "undefined") {
@@ -86,11 +86,103 @@ export interface Prediction {
     upper_bound: number;
 }
 
+export interface UserProfile {
+    id: string;
+    email: string;
+    full_name: string;
+    is_active: boolean;
+    organization_id: string;
+    role: string;
+    created_at: string;
+}
+
+export interface LoginResponse {
+    access_token: string;
+    refresh_token?: string | null;
+    token_type: string;
+    csrf_token?: string | null;
+}
+
 export interface ModelStatus {
     predictor_fitted: boolean;
     detector_fitted: boolean;
     predictor_last_trained?: string;
-    detector_baseline_stats?: any;
+    detector_baseline_stats?: Record<string, unknown> | null;
+}
+
+export interface PredictionResponse {
+    success: boolean;
+    predictions: Prediction[];
+    summary?: {
+        total_predicted_cost: number;
+        average_daily_cost: number;
+        forecast_days: number;
+        confidence_level: number;
+        currency: string;
+        model?: string | null;
+    } | null;
+    error?: string | null;
+}
+
+export interface AnomalyResponse {
+    success: boolean;
+    total_records: number;
+    anomalies_found: number;
+    anomaly_rate: number;
+    anomalies: Array<{
+        date: string;
+        actual_cost: number;
+        expected_cost: number;
+        deviation_percent: number;
+        severity: "low" | "medium" | "high" | "critical";
+        anomaly_score: number;
+        service?: string | null;
+        currency: string;
+    }>;
+    error?: string | null;
+}
+
+export interface SyncTaskResult {
+    message: string;
+    task_id: string;
+    account_id: string;
+    status: string;
+}
+
+export interface NamespaceCost {
+    namespace: string;
+    cpu_cores: number;
+    memory_gb: number;
+    network_gb: number;
+    cost: number;
+    cpu_cost: number;
+    memory_cost: number;
+    network_cost: number;
+}
+
+export interface PodCost {
+    pod: string;
+    namespace: string;
+    cpu_cores: number;
+    memory_gb: number;
+    cpu_cost: number;
+    memory_cost: number;
+    cost: number;
+}
+
+export interface NamespaceTrendEntry {
+    timestamp: string;
+    namespaces: Record<string, { cost: number; cpu_cost: number; memory_cost: number }>;
+}
+
+export interface LabelCost {
+    label: string;
+    value: string;
+    cpu_cores: number;
+    memory_gb: number;
+    cpu_cost: number;
+    memory_cost: number;
+    cost: number;
 }
 
 export interface CloudAccount {
@@ -186,25 +278,38 @@ export interface RuntimeStatus {
     providers: Record<string, RuntimeProviderStatus>;
 }
 
-export interface CostSummaryResponse {
-    total_cost: string;
+export interface CostTrendPoint {
+    date: string;
+    amount: number;
     currency: string;
+    change_percent?: number | null;
+    predicted?: boolean;
+}
+
+export interface CostSummaryResponse {
+    total_cost: string | null;
+    currency: string | null;
+    currency_totals: Record<string, string>;
     period_start: string;
     period_end: string;
     by_service: Record<string, string>;
+    by_service_by_currency: Record<string, Record<string, string>>;
     by_region: Record<string, string>;
-    by_day: Array<{ date: string; amount: number }>;
+    by_region_by_currency: Record<string, Record<string, string>>;
+    by_day: Array<{ date: string; amount: number; currency: string }>;
 }
 
 export interface CostServiceBreakdown {
     service: string;
     total_cost: number;
+    currency: string;
     record_count: number;
 }
 
 export interface CostRegionBreakdown {
     region: string;
     total_cost: number;
+    currency: string;
 }
 
 export interface CostReconciliation {
@@ -212,6 +317,7 @@ export interface CostReconciliation {
     account_name: string;
     provider: string;
     days: number;
+    currency: string | null;
     last_sync_at?: string | null;
     imported_total: string;
     provider_total: string;
@@ -270,15 +376,32 @@ export interface NotificationChannelUpdate {
 }
 
 
-const safeCall = async <T>(promise: Promise<any>): Promise<ApiResult<T>> => {
+function getErrorMessage(error: unknown): string {
+    if (axios.isAxiosError(error)) {
+        const responseData = error.response?.data;
+        if (typeof responseData === "string" && responseData) {
+            return responseData;
+        }
+        if (typeof responseData === "object" && responseData !== null && "detail" in responseData) {
+            const detail = responseData.detail;
+            if (typeof detail === "string" && detail) {
+                return detail;
+            }
+        }
+        return error.message || "An unknown error occurred";
+    }
+    return error instanceof Error ? error.message : "An unknown error occurred";
+}
+
+const safeCall = async <T>(promise: Promise<AxiosResponse<T>>): Promise<ApiResult<T>> => {
     try {
         const response = await promise;
         return { success: true, data: response.data };
-    } catch (error: any) {
+    } catch (error: unknown) {
         return {
             success: false,
-            data: null as any,
-            error: error.response?.data?.detail || error.message || "An unknown error occurred",
+            data: null as unknown as T,
+            error: getErrorMessage(error),
         };
     }
 };
@@ -289,7 +412,7 @@ export async function login(email: string, password: string) {
     formData.append("username", email);
     formData.append("password", password);
 
-    return safeCall<{ token_type: string }>(
+    return safeCall<LoginResponse>(
         authApi.post("/login", formData, {
             headers: { "Content-Type": "multipart/form-data" }
         })
@@ -297,13 +420,13 @@ export async function login(email: string, password: string) {
 }
 
 export async function register(email: string, password: string, organization_name: string, full_name?: string) {
-    return safeCall<any>(
+    return safeCall<UserProfile>(
         authApi.post("/register", { email, password, organization_name, full_name })
     );
 }
 
 export async function getMe() {
-    return safeCall<any>(authApi.get("/me"));
+    return safeCall<UserProfile>(authApi.get("/me"));
 }
 
 export async function logout() {
@@ -323,7 +446,7 @@ export async function getCostSummary(days = 30, filters?: CostFilters) {
 }
 
 export async function getCostTrend(days = 30, filters?: CostFilters) {
-    return safeCall<any>(costApi.get("/costs/trend", { params: buildCostParams(days, filters) }));
+    return safeCall<CostTrendPoint[]>(costApi.get("/costs/trend", { params: buildCostParams(days, filters) }));
 }
 
 export async function getCostsByService(days = 30, filters?: CostFilters) {
@@ -369,24 +492,26 @@ export async function deleteCloudAccount(id: string) {
 }
 
 export async function syncCloudAccount(id: string) {
-    return safeCall<any>(costApi.post(`/accounts/${id}/sync`));
+    return safeCall<SyncTaskResult>(costApi.post(`/accounts/${id}/sync`));
 }
 
 
 // ML Service API Functions
 export async function getPredictions(
     days = 30,
-    costData: Array<{ date: string; amount: number; service?: string | null }>,
+    costData: Array<{ date: string; amount: number; currency: string; service?: string | null }>,
 ) {
-    return safeCall<any>(mlApi.post("/ml/predict", { days, cost_data: costData }));
+    return safeCall<PredictionResponse>(mlApi.post("/ml/predict", { days, cost_data: costData }));
 }
 
-export async function getAnomalies(costData: any[]) {
-    return safeCall<any>(mlApi.post("/ml/detect", { cost_data: costData }));
+export async function getAnomalies(
+    costData: Array<{ date: string; amount: number; currency: string; service?: string | null }>,
+) {
+    return safeCall<AnomalyResponse>(mlApi.post("/ml/detect", { cost_data: costData }));
 }
 
 export async function getModelStatus() {
-    return safeCall<any>(mlApi.get("/ml/status"));
+    return safeCall<ModelStatus>(mlApi.get("/ml/status"));
 }
 
 // Chat / AI Analyst
@@ -396,19 +521,19 @@ export async function chatAnalyze(request: { message: string; conversation_id?: 
 
 // Kubernetes
 export async function getNamespaceCosts(window = "24h") {
-    return safeCall<any>(costApi.get("/kubernetes/namespaces/cost", { params: { window } }));
+    return safeCall<NamespaceCost[]>(costApi.get("/kubernetes/namespaces/cost", { params: { window } }));
 }
 
 export async function getPodCosts(namespace: string, window = "24h") {
-    return safeCall<any>(costApi.get(`/kubernetes/namespaces/${encodeURIComponent(namespace)}/pods`, { params: { window } }));
+    return safeCall<PodCost[]>(costApi.get(`/kubernetes/namespaces/${encodeURIComponent(namespace)}/pods`, { params: { window } }));
 }
 
 export async function getNamespaceTrend(days = 7) {
-    return safeCall<any>(costApi.get("/kubernetes/namespaces/trend", { params: { days } }));
+    return safeCall<NamespaceTrendEntry[]>(costApi.get("/kubernetes/namespaces/trend", { params: { days } }));
 }
 
 export async function getLabelCosts(label = "app", window = "24h") {
-    return safeCall<any>(costApi.get("/kubernetes/namespaces/labels", { params: { label, window } }));
+    return safeCall<LabelCost[]>(costApi.get("/kubernetes/namespaces/labels", { params: { label, window } }));
 }
 
 // Notifications
@@ -478,7 +603,9 @@ export async function downloadCostExport(days = 30, filters?: CostFilters): Prom
         responseType: "blob",
     });
 
-    const blob = new Blob([response.data], { type: response.headers["content-type"] || "text/csv" });
+    const responseContentType = response.headers["content-type"];
+    const contentType = typeof responseContentType === "string" ? responseContentType : "text/csv";
+    const blob = new Blob([response.data], { type: contentType });
     const disposition = response.headers["content-disposition"] as string | undefined;
     const filenameMatch = disposition?.match(/filename="?([^"]+)"?/i);
     const filename = filenameMatch?.[1] || `cloudpulse-costs-${days}d.csv`;

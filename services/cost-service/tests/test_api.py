@@ -77,9 +77,16 @@ class TestHealthEndpoints:
         assert set(data["providers"]) == {"aws", "azure", "gcp"}
 
     @pytest.mark.asyncio
-    async def test_provider_preflight_reports_missing_env(self, client: AsyncClient):
+    async def test_provider_preflight_reports_missing_env(
+        self,
+        client: AsyncClient,
+        auth_headers: dict[str, str],
+    ):
         """Provider preflight should explain missing env vars when live config is incomplete."""
-        response = await client.get("/api/v1/health/preflight/gcp")
+        response = await client.get(
+            "/api/v1/health/preflight/gcp",
+            headers=auth_headers,
+        )
         assert response.status_code == 200
 
         data = response.json()
@@ -89,7 +96,12 @@ class TestHealthEndpoints:
         assert "GCP_BILLING_EXPORT_TABLE" in data["missing_env"]
 
     @pytest.mark.asyncio
-    async def test_provider_preflight_runs_live_validation(self, client: AsyncClient, monkeypatch):
+    async def test_provider_preflight_runs_live_validation(
+        self,
+        client: AsyncClient,
+        auth_headers: dict[str, str],
+        monkeypatch,
+    ):
         """Provider preflight should run the provider smoke test when env-backed config exists."""
         monkeypatch.setattr(health_module.settings, "aws_access_key_id", "demo-key")
         monkeypatch.setattr(health_module.settings, "aws_secret_access_key", "demo-secret")
@@ -106,7 +118,10 @@ class TestHealthEndpoints:
             "validate_live_access",
             fake_validate,
         ):
-            response = await client.get("/api/v1/health/preflight/aws")
+            response = await client.get(
+                "/api/v1/health/preflight/aws",
+                headers=auth_headers,
+            )
 
         assert response.status_code == 200
         data = response.json()
@@ -396,9 +411,9 @@ class TestCostsAPI:
             async def get_cost_data(self, start_date, end_date, granularity="DAILY"):
                 del start_date, end_date, granularity
                 return [
-                    {"amount": Decimal("100.00")},
-                    {"amount": Decimal("50.00")},
-                    {"amount": Decimal("75.00")},
+                    {"amount": Decimal("100.00"), "currency": "USD"},
+                    {"amount": Decimal("50.00"), "currency": "USD"},
+                    {"amount": Decimal("75.00"), "currency": "USD"},
                 ]
 
         with patch("app.api.costs.ProviderFactory.get_provider", return_value=FakeProvider()):
@@ -492,12 +507,25 @@ class TestChatAPI:
             def requires_api_key(self) -> bool:
                 return True
 
-            async def get_chat_response(self, message: str, context_data: dict | None = None) -> str:
+            async def get_chat_response(
+                self,
+                message: str,
+                context_data: dict | None = None,
+                history: list[dict[str, str]] | None = None,
+            ) -> str:
+                del history
                 captured["message"] = message
                 captured["context"] = context_data or {}
                 return "ok"
 
         app.dependency_overrides[get_llm_service] = lambda: FakeLLMService()
+        app.dependency_overrides[get_settings] = lambda: get_settings().model_copy(
+            update={
+                "llm_enabled": True,
+                "llm_api_key": "test-key",
+                "llm_allow_external_inference": True,
+            }
+        )
         try:
             response = await client.post(
                 "/api/v1/chat/analyze",
@@ -508,6 +536,7 @@ class TestChatAPI:
                 },
             )
         finally:
+            app.dependency_overrides.pop(get_settings, None)
             app.dependency_overrides.pop(get_llm_service, None)
 
         assert response.status_code == 200
@@ -538,11 +567,23 @@ class TestChatAPI:
             def requires_api_key(self) -> bool:
                 return True
 
-            async def get_chat_response(self, message: str, context_data: dict | None = None) -> str:
-                del message, context_data
+            async def get_chat_response(
+                self,
+                message: str,
+                context_data: dict | None = None,
+                history: list[dict[str, str]] | None = None,
+            ) -> str:
+                del message, context_data, history
                 return "grounded"
 
         app.dependency_overrides[get_llm_service] = lambda: FakeLLMService()
+        app.dependency_overrides[get_settings] = lambda: get_settings().model_copy(
+            update={
+                "llm_enabled": True,
+                "llm_api_key": "test-key",
+                "llm_allow_external_inference": True,
+            }
+        )
         try:
             response = await client.post(
                 "/api/v1/chat/analyze",
@@ -559,6 +600,7 @@ class TestChatAPI:
                 },
             )
         finally:
+            app.dependency_overrides.pop(get_settings, None)
             app.dependency_overrides.pop(get_llm_service, None)
 
         assert response.status_code == 200

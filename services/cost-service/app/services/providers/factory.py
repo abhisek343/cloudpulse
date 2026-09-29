@@ -27,7 +27,12 @@ class ProviderFactory:
     }
     
     @classmethod
-    def get_provider(cls, provider_type: str, credentials: dict[str, Any]) -> CostProvider:
+    def get_provider(
+        cls,
+        provider_type: str,
+        credentials: dict[str, Any],
+        organization_id: str | None = None,
+    ) -> CostProvider:
         """
         Get a cost provider instance.
         
@@ -51,10 +56,14 @@ class ProviderFactory:
             raise ValueError(f"Unsupported provider: {provider_type}. Supported: {supported}")
 
         if provider_type == "demo":
-            return DemoProvider(provider_type="demo", config=credentials)
+            provider = DemoProvider(provider_type="demo", config=credentials)
+            provider.organization_id = organization_id
+            return provider
 
         if requested_mode == "demo":
-            return DemoProvider(provider_type=provider_type, config=credentials)
+            provider = DemoProvider(provider_type=provider_type, config=credentials)
+            provider.organization_id = organization_id
+            return provider
 
         if not settings.allow_live_cloud_sync:
             raise ValueError(
@@ -63,7 +72,9 @@ class ProviderFactory:
             )
 
         provider_class = cls._providers.get(provider_type)
-        return provider_class(credentials)
+        provider = provider_class(credentials)
+        provider.organization_id = organization_id
+        return provider
     
     @classmethod
     def get_supported_providers(cls) -> list[str]:

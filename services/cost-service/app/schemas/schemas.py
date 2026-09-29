@@ -142,6 +142,21 @@ class CloudAccountResponse(BaseSchema):
     created_at: datetime
 
 
+class SyncTaskResponse(BaseModel):
+    """Authoritative status for one queued synchronization task."""
+
+    task_id: str
+    account_id: str
+    status: str
+    attempt: int
+    max_attempts: int
+    error: str | None = None
+    records_imported: int | None = None
+    queued_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
 class CloudAccountStatusResponse(BaseModel):
     """Sync telemetry and current data coverage for a cloud account."""
 
@@ -158,6 +173,9 @@ class CloudAccountStatusResponse(BaseModel):
     coverage_end: datetime | None = None
     services_detected: int = 0
     currency: str | None = None
+    latest_task_id: str | None = None
+    latest_task_status: str | None = None
+    latest_task_error: str | None = None
 
 
 class CloudAccountDetectRequest(BaseModel):
@@ -208,22 +226,26 @@ class CostRecordResponse(BaseSchema):
 
 
 class CostSummary(BaseModel):
-    """Aggregated cost summary."""
+    """Aggregated cost summary that never combines unlike currencies."""
 
-    total_cost: Decimal
-    currency: str = "USD"
+    total_cost: Decimal | None = None
+    currency: str | None = "USD"
+    currency_totals: dict[str, Decimal] = Field(default_factory=dict)
     period_start: datetime
     period_end: datetime
     by_service: dict[str, Decimal] = Field(default_factory=dict)
+    by_service_by_currency: dict[str, dict[str, Decimal]] = Field(default_factory=dict)
     by_region: dict[str, Decimal] = Field(default_factory=dict)
+    by_region_by_currency: dict[str, dict[str, Decimal]] = Field(default_factory=dict)
     by_day: list[dict] = Field(default_factory=list)
 
 
 class CostTrend(BaseModel):
-    """Cost trend data for visualization."""
+    """Cost trend data; each point is explicitly denominated."""
 
     date: datetime
     amount: Decimal
+    currency: str = "USD"
     change_percent: Decimal | None = None
     predicted: bool = False
 

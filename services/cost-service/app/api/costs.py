@@ -5,6 +5,7 @@ Cost data endpoints - querying and aggregations.
 import csv
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from collections import defaultdict
 from io import StringIO
 from typing import Annotated, Literal
 
@@ -25,6 +26,7 @@ from app.schemas import (
     CostTrend,
     PaginatedResponse,
 )
+from app.services.currency import normalize_currency
 from app.services.providers.factory import ProviderFactory
 
 router = APIRouter()
@@ -37,6 +39,7 @@ class CostReconciliationResponse(BaseModel):
     account_name: str
     provider: str
     days: int
+    currency: str | None = None
     last_sync_at: datetime | None = None
     imported_total: Decimal
     provider_total: Decimal
@@ -87,6 +90,14 @@ def _build_cost_filters(
         filters.append(CloudAccount.cost_center == cost_center)
 
     return filters
+
+
+def _stored_currency(value: object) -> str:
+    """Normalize legacy records without ever presenting malformed data as USD."""
+    try:
+        return normalize_currency(value, required=False)
+    except ValueError:
+        return "UNKNOWN"
 
 
 def _resolve_window(days: int) -> tuple[datetime, datetime]:
@@ -170,21 +181,33 @@ async def get_cost_summary(
     )
 
     day_bucket = func.date_trunc("day", CostRecord.date)
-    total_cost = await db.scalar(
-        select(func.coalesce(func.sum(CostRecord.amount), 0))
-        .join(CloudAccount)
-        .where(*filters)
-    )
+    currency_rows = (
+        await db.execute(
+            select(
+                CostRecord.currency,
+                func.sum(CostRecord.amount).label("total"),
+            )
+            .join(CloudAccount)
+            .where(*filters)
+            .group_by(CostRecord.currency)
+        )
+    ).all()
+    currency_totals: dict[str, Decimal] = defaultdict(Decimal)
+    for row in currency_rows:
+        if row.total is not None:
+            currency_totals[_stored_currency(row.currency)] += Decimal(str(row.total))
+    currencies = sorted(currency_totals)
 
     service_rows = (
         await db.execute(
             select(
                 CostRecord.service,
+                CostRecord.currency,
                 func.sum(CostRecord.amount).label("total"),
             )
             .join(CloudAccount)
             .where(*filters)
-            .group_by(CostRecord.service)
+            .group_by(CostRecord.service, CostRecord.currency)
             .order_by(func.sum(CostRecord.amount).desc())
         )
     ).all()
@@ -193,11 +216,12 @@ async def get_cost_summary(
         await db.execute(
             select(
                 CostRecord.region,
+                CostRecord.currency,
                 func.sum(CostRecord.amount).label("total"),
             )
             .join(CloudAccount)
             .where(*filters, CostRecord.region.isnot(None))
-            .group_by(CostRecord.region)
+            .group_by(CostRecord.region, CostRecord.currency)
             .order_by(func.sum(CostRecord.amount).desc())
         )
     ).all()
@@ -206,48 +230,77 @@ async def get_cost_summary(
         await db.execute(
             select(
                 day_bucket.label("day"),
+                CostRecord.currency,
                 func.sum(CostRecord.amount).label("total"),
             )
             .join(CloudAccount)
             .where(*filters)
-            .group_by(day_bucket)
+            .group_by(day_bucket, CostRecord.currency)
             .order_by(day_bucket)
         )
     ).all()
 
-    by_service = {
-        row.service: Decimal(str(row.total))
-        for row in service_rows
-        if row.service and row.total is not None
-    }
-    by_region = {
-        row.region: Decimal(str(row.total))
-        for row in region_rows
-        if row.region and row.total is not None
-    }
+    by_service_by_currency: dict[str, dict[str, Decimal]] = defaultdict(dict)
+    for row in service_rows:
+        if row.service and row.total is not None:
+            by_service_by_currency[row.service][_stored_currency(row.currency)] = Decimal(str(row.total))
 
-    by_day_lookup = {
-        row.day.date(): Decimal(str(row.total))
-        for row in day_rows
-        if row.day is not None and row.total is not None
-    }
+    by_region_by_currency: dict[str, dict[str, Decimal]] = defaultdict(dict)
+    for row in region_rows:
+        if row.region and row.total is not None:
+            by_region_by_currency[row.region][_stored_currency(row.currency)] = Decimal(str(row.total))
+
+    by_day_by_currency: dict[object, dict[str, Decimal]] = defaultdict(dict)
+    for row in day_rows:
+        if row.day is not None and row.total is not None:
+            day_value = row.day.date() if hasattr(row.day, "date") else row.day
+            by_day_by_currency[day_value][_stored_currency(row.currency)] = Decimal(str(row.total))
+
+    single_currency = len(currencies) == 1
+    display_currency = currencies[0] if single_currency else None
+    by_service = (
+        {name: values[display_currency] for name, values in by_service_by_currency.items() if display_currency in values}
+        if display_currency
+        else {}
+    )
+    by_region = (
+        {name: values[display_currency] for name, values in by_region_by_currency.items() if display_currency in values}
+        if display_currency
+        else {}
+    )
+
     sorted_days = []
     for day_offset in range(days):
         current_day = (start_date + timedelta(days=day_offset)).date()
-        sorted_days.append(
-            {
-                "date": current_day.isoformat(),
-                "amount": float(by_day_lookup.get(current_day, Decimal("0"))),
-            }
-        )
+        day_values = by_day_by_currency.get(current_day, {})
+        if single_currency and display_currency:
+            sorted_days.append(
+                {
+                    "date": current_day.isoformat(),
+                    "amount": float(day_values.get(display_currency, Decimal("0"))),
+                    "currency": display_currency,
+                }
+            )
+        elif currencies:
+            for currency in currencies:
+                sorted_days.append(
+                    {
+                        "date": current_day.isoformat(),
+                        "amount": float(day_values.get(currency, Decimal("0"))),
+                        "currency": currency,
+                    }
+                )
 
     summary = CostSummary(
-        total_cost=Decimal(str(total_cost or 0)),
-        currency="USD",
+        total_cost=currency_totals[display_currency] if single_currency and display_currency else None,
+        currency=display_currency,
+        currency_totals=dict(currency_totals),
         period_start=start_date,
         period_end=end_date,
         by_service=by_service,
+        by_service_by_currency={name: dict(values) for name, values in by_service_by_currency.items()},
         by_region=by_region,
+        by_region_by_currency={name: dict(values) for name, values in by_region_by_currency.items()},
         by_day=sorted_days,
     )
     
@@ -305,38 +358,41 @@ async def get_cost_trend(
         await db.execute(
             select(
                 bucket.label("day"),
+                CostRecord.currency,
                 func.sum(CostRecord.amount).label("total"),
             )
             .join(CloudAccount)
             .where(*filters)
-            .group_by(bucket)
+            .group_by(bucket, CostRecord.currency)
             .order_by(bucket)
         )
     ).all()
-    amounts_by_day = {
-        row.day.date(): Decimal(str(row.total))
-        for row in rows
-        if row.day is not None and row.total is not None
-    }
-    
+    amounts_by_currency: dict[str, dict[object, Decimal]] = defaultdict(dict)
+    for row in rows:
+        if row.day is not None and row.total is not None:
+            day_value = row.day.date() if hasattr(row.day, "date") else row.day
+            amounts_by_currency[_stored_currency(row.currency)][day_value] = Decimal(str(row.total))
+
     trends: list[CostTrend] = []
-    prev_amount: Decimal | None = None
-    
-    for day_offset in range(days):
-        current_day = (start_date + timedelta(days=day_offset)).date()
-        amount = amounts_by_day.get(current_day, Decimal("0"))
-        change_percent = None
-        
-        if prev_amount is not None and prev_amount > 0:
-            change_percent = ((amount - prev_amount) / prev_amount) * 100
-        
-        trends.append(CostTrend(
-            date=datetime.combine(current_day, datetime.min.time(), tzinfo=timezone.utc),
-            amount=amount,
-            change_percent=change_percent,
-            predicted=False,
-        ))
-        prev_amount = amount
+    for currency in sorted(amounts_by_currency):
+        previous: Decimal | None = None
+        daily_amounts = amounts_by_currency[currency]
+        for day_offset in range(days):
+            current_day = (start_date + timedelta(days=day_offset)).date()
+            amount = daily_amounts.get(current_day, Decimal("0"))
+            change_percent = None
+            if previous is not None and previous > 0:
+                change_percent = ((amount - previous) / previous) * 100
+            trends.append(
+                CostTrend(
+                    date=datetime.combine(current_day, datetime.min.time(), tzinfo=timezone.utc),
+                    amount=amount,
+                    currency=currency,
+                    change_percent=change_percent,
+                    predicted=False,
+                )
+            )
+            previous = amount
     
     # Cache result
     await cache.set(cache_key, [t.model_dump(mode="json") for t in trends])
@@ -371,13 +427,15 @@ async def get_costs_by_service(
 
     query = select(
         CostRecord.service,
+        CostRecord.currency,
         func.sum(CostRecord.amount).label("total_cost"),
         func.count(CostRecord.id).label("record_count"),
     ).join(CloudAccount).where(*filters)
-    
-    # Group and order
+
+    # Group by currency before ordering; unlike currencies are never ranked as one total.
     query = query.group_by(
-        CostRecord.service
+        CostRecord.service,
+        CostRecord.currency,
     ).order_by(
         func.sum(CostRecord.amount).desc()
     ).limit(limit)
@@ -389,6 +447,7 @@ async def get_costs_by_service(
         {
             "service": row.service,
             "total_cost": float(row.total_cost) if row.total_cost else 0,
+            "currency": _stored_currency(row.currency),
             "record_count": row.record_count,
         }
         for row in rows
@@ -421,12 +480,14 @@ async def get_costs_by_region(
 
     query = select(
         CostRecord.region,
+        CostRecord.currency,
         func.sum(CostRecord.amount).label("total_cost"),
     ).join(CloudAccount).where(*filters, CostRecord.region.isnot(None))
-    
-    # Group and order
+
+    # Group by currency before ordering; each response row is denominated.
     query = query.group_by(
-        CostRecord.region
+        CostRecord.region,
+        CostRecord.currency,
     ).order_by(
         func.sum(CostRecord.amount).desc()
     )
@@ -438,6 +499,7 @@ async def get_costs_by_region(
         {
             "region": row.region,
             "total_cost": float(row.total_cost) if row.total_cost else 0,
+            "currency": _stored_currency(row.currency),
         }
         for row in rows
     ]
@@ -538,20 +600,52 @@ async def get_cost_reconciliation(
     )
     start_date, end_date = _resolve_window(days)
 
-    imported_total = await db.scalar(
-        select(func.coalesce(func.sum(CostRecord.amount), 0)).where(
-            CostRecord.cloud_account_id == account.id,
-            CostRecord.date >= start_date,
-            CostRecord.date <= end_date,
+    imported_rows = (
+        await db.execute(
+            select(
+                CostRecord.currency,
+                func.sum(CostRecord.amount).label("total"),
+            )
+            .where(
+                CostRecord.cloud_account_id == account.id,
+                CostRecord.date >= start_date,
+                CostRecord.date <= end_date,
+            )
+            .group_by(CostRecord.currency)
         )
-    )
-    imported_total_decimal = Decimal(str(imported_total or 0)).quantize(Decimal("0.01"))
+    ).all()
+    imported_by_currency: dict[str, Decimal] = defaultdict(Decimal)
+    for row in imported_rows:
+        if row.total is not None:
+            imported_by_currency[_stored_currency(row.currency)] += Decimal(str(row.total))
 
     credentials = decrypt_credentials(account.credentials or {})
-    provider = ProviderFactory.get_provider(account.provider, credentials)
+    provider = ProviderFactory.get_provider(
+        account.provider,
+        credentials,
+        organization_id=current_user.organization_id,
+    )
     provider_records = await provider.get_cost_data(start_date=start_date, end_date=end_date, granularity="DAILY")
-    provider_total = sum((Decimal(str(row.get("amount", 0))) for row in provider_records), start=Decimal("0"))
-    provider_total_decimal = provider_total.quantize(Decimal("0.01"))
+    provider_by_currency: dict[str, Decimal] = defaultdict(Decimal)
+    try:
+        for row in provider_records:
+            provider_currency = normalize_currency(row.get("currency"))
+            provider_by_currency[provider_currency] += Decimal(str(row.get("amount", 0)))
+    except (TypeError, ValueError, ArithmeticError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="Provider reconciliation data has an invalid amount or currency.",
+        ) from exc
+
+    currencies = sorted(set(imported_by_currency) | set(provider_by_currency))
+    if len(currencies) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Reconciliation requires one matching currency for imported and provider data.",
+        )
+    currency = currencies[0] if currencies else None
+    imported_total_decimal = (imported_by_currency.get(currency, Decimal("0")) if currency else Decimal("0")).quantize(Decimal("0.01"))
+    provider_total_decimal = (provider_by_currency.get(currency, Decimal("0")) if currency else Decimal("0")).quantize(Decimal("0.01"))
 
     variance_amount = (imported_total_decimal - provider_total_decimal).quantize(Decimal("0.01"))
     if provider_total_decimal > 0:
@@ -567,6 +661,7 @@ async def get_cost_reconciliation(
         account_name=account.account_name,
         provider=account.provider,
         days=days,
+        currency=currency,
         last_sync_at=account.last_sync_at,
         imported_total=imported_total_decimal,
         provider_total=provider_total_decimal,

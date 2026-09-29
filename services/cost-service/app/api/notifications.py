@@ -2,7 +2,7 @@
 CloudPulse AI - Cost Service
 Notification channel CRUD API endpoints.
 """
-from typing import Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_user
 from app.core.database import get_db
+from app.models import User
 from app.models import NotificationChannel
 from app.schemas import (
     NotificationChannelCreate,
@@ -24,11 +25,11 @@ router = APIRouter()
 
 @router.get("/channels", response_model=list[NotificationChannelResponse])
 async def list_channels(
-    user: dict[str, Any] = Depends(get_current_user),
+    user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),
 ) -> list[NotificationChannelResponse]:
     """List all notification channels for the current organization."""
-    org_id = user["organization_id"]
+    org_id = user.organization_id
     result = await db.execute(
         select(NotificationChannel)
         .where(NotificationChannel.organization_id == org_id)
@@ -41,7 +42,7 @@ async def list_channels(
 @router.post("/channels", response_model=NotificationChannelResponse, status_code=201)
 async def create_channel(
     body: NotificationChannelCreate,
-    user: dict[str, Any] = Depends(get_current_user),
+    user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),
 ) -> NotificationChannelResponse:
     """Create a new notification channel."""
@@ -49,7 +50,7 @@ async def create_channel(
         raise HTTPException(status_code=422, detail="config must include webhook_url")
 
     channel = NotificationChannel(
-        organization_id=user["organization_id"],
+        organization_id=user.organization_id,
         channel_type=body.channel_type,
         name=body.name,
         config=body.config,
@@ -66,11 +67,11 @@ async def create_channel(
 async def update_channel(
     channel_id: str,
     body: NotificationChannelUpdate,
-    user: dict[str, Any] = Depends(get_current_user),
+    user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),
 ) -> NotificationChannelResponse:
     """Update a notification channel."""
-    channel = await _get_channel_or_404(db, channel_id, user["organization_id"])
+    channel = await _get_channel_or_404(db, channel_id, user.organization_id)
 
     update_data = body.model_dump(exclude_unset=True)
     if "config" in update_data and "webhook_url" not in update_data["config"]:
@@ -87,11 +88,11 @@ async def update_channel(
 @router.delete("/channels/{channel_id}", status_code=204)
 async def delete_channel(
     channel_id: str,
-    user: dict[str, Any] = Depends(get_current_user),
+    user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Delete a notification channel."""
-    channel = await _get_channel_or_404(db, channel_id, user["organization_id"])
+    channel = await _get_channel_or_404(db, channel_id, user.organization_id)
     await db.delete(channel)
     await db.commit()
 
@@ -99,11 +100,11 @@ async def delete_channel(
 @router.post("/channels/{channel_id}/test", response_model=NotificationTestResult)
 async def test_channel(
     channel_id: str,
-    user: dict[str, Any] = Depends(get_current_user),
+    user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db),
 ) -> NotificationTestResult:
     """Send a test notification to verify the channel works."""
-    channel = await _get_channel_or_404(db, channel_id, user["organization_id"])
+    channel = await _get_channel_or_404(db, channel_id, user.organization_id)
     svc = get_notification_service()
     ok = await svc.send_test(channel.channel_type, channel.config)
     return NotificationTestResult(

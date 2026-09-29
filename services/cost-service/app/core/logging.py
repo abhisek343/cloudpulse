@@ -52,9 +52,15 @@ def configure_logging(json_output: bool = False, level: str = "INFO") -> None:
 
 # Patterns that may contain credentials or tokens
 _SENSITIVE_PATTERNS = [
-    re.compile(r"(key|secret|token|password|credential|authorization)[=:]\s*\S+(\s+\S+)?", re.IGNORECASE),
-    re.compile(r"AKIA[0-9A-Z]{16}"),  # AWS access key
     re.compile(r"Bearer\s+\S+", re.IGNORECASE),
+    re.compile(
+        r"([\"']?(?:access[_-]?key[_-]?id|secret[_-]?access[_-]?key|session[_-]?token|"
+        r"client[_-]?secret|service[_-]?account(?:[_-]?json|[_-]?file)?|api[_-]?key|"
+        r"password|credential|authorization|token)[\"']?\s*[:=]\s*)"
+        r"[\"']?[^,\"'\s}]+",
+        re.IGNORECASE,
+    ),
+    re.compile(r"AKIA[0-9A-Z]{16}"),  # AWS access key
 ]
 
 

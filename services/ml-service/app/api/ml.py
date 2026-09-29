@@ -29,6 +29,24 @@ settings = get_settings()
 tracer = get_tracer(__name__)
 
 
+def _build_cost_data(points: list) -> list[dict]:
+    currencies = {point.currency for point in points}
+    if len(currencies) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="ML requests must contain one currency; group or convert costs before inference.",
+        )
+    return [
+        {
+            "date": point.date,
+            "amount": float(point.amount),
+            "currency": point.currency,
+            "service": point.service,
+        }
+        for point in points
+    ]
+
+
 @router.post("/train", response_model=TrainResponse)
 async def train_models(
     request: TrainRequest,
@@ -41,16 +59,9 @@ async def train_models(
     """
     with tracer.start_as_current_span("ml.train_models") as span:
         predictor = get_predictor()
-        detector = get_detector()
+        detector = get_detector(current_user.organization_id)
 
-        cost_data = [
-            {
-                "date": point.date,
-                "amount": float(point.amount),
-                "service": point.service,
-            }
-            for point in request.cost_data
-        ]
+        cost_data = _build_cost_data(request.cost_data)
         span.set_attribute("cloudpulse.training.records", len(cost_data))
 
         predictor_result = predictor.train(cost_data)
@@ -81,14 +92,7 @@ async def predict_costs(
     started_at = time.perf_counter()
 
     with tracer.start_as_current_span("ml.predict_costs") as span:
-        cost_data = [
-            {
-                "date": point.date,
-                "amount": float(point.amount),
-                "service": point.service,
-            }
-            for point in request.cost_data
-        ]
+        cost_data = _build_cost_data(request.cost_data)
         span.set_attribute("cloudpulse.prediction.records", len(cost_data))
         span.set_attribute("cloudpulse.prediction.days", request.days)
 
@@ -125,18 +129,11 @@ async def detect_anomalies(
     
     If model is not trained, trains on the provided data first.
     """
-    detector = get_detector()
+    detector = get_detector(current_user.organization_id)
     started_at = time.perf_counter()
 
     with tracer.start_as_current_span("ml.detect_anomalies") as span:
-        cost_data = [
-            {
-                "date": point.date,
-                "amount": float(point.amount),
-                "service": point.service,
-            }
-            for point in request.cost_data
-        ]
+        cost_data = _build_cost_data(request.cost_data)
         span.set_attribute("cloudpulse.detection.records", len(cost_data))
 
         if not detector.is_fitted:
@@ -181,8 +178,8 @@ async def check_single_anomaly(
     
     Uses baseline statistics for fast detection.
     """
-    detector = get_detector()
-    
+    detector = get_detector(current_user.organization_id)
+
     if not detector.is_fitted:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -199,11 +196,13 @@ async def check_single_anomaly(
 
 
 @router.get("/status", response_model=ModelStatus)
-async def get_model_status() -> ModelStatus:
+async def get_model_status(
+    current_user: Annotated[TokenPayload, Depends(get_current_user)],
+) -> ModelStatus:
     """Get the current status of ML models."""
     predictor = get_predictor()
-    detector = get_detector()
-    
+    detector = get_detector(current_user.organization_id)
+
     return ModelStatus(
         predictor_fitted=predictor.is_fitted,
         detector_fitted=detector.is_fitted,
@@ -213,7 +212,9 @@ async def get_model_status() -> ModelStatus:
 
 
 @router.get("/trend-components")
-async def get_trend_components() -> dict:
+async def get_trend_components(
+    current_user: Annotated[TokenPayload, Depends(get_current_user)],
+) -> dict:
     """
     Get the trend and seasonality components from the predictor.
     

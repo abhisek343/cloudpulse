@@ -189,11 +189,11 @@ class TestSecurityHelpers:
         assert payload["type"] == "refresh"
         assert payload["csrf"] == "csrf-token"
 
-    def test_encrypt_credentials_is_passthrough_without_key(self):
-        """Credential encryption should be optional in local development."""
+    def test_encrypt_demo_metadata_without_key(self):
+        """Demo metadata works without real provider credential storage."""
         from app.core.security import decrypt_credentials, encrypt_credentials
 
-        credentials = {"access_key_id": "abc", "secret_access_key": "xyz"}
+        credentials = {"mode": "demo", "scenario": "saas"}
         stored = encrypt_credentials(credentials)
         assert stored == credentials
         assert decrypt_credentials(stored) == credentials

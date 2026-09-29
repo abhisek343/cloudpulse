@@ -22,7 +22,11 @@ vi.mock("axios", () => {
 
 import axios from "axios";
 
-const mockAxios = axios.create() as any;
+const mockAxios = axios.create() as unknown as {
+    get: ReturnType<typeof vi.fn>;
+    post: ReturnType<typeof vi.fn>;
+    delete: ReturnType<typeof vi.fn>;
+};
 
 describe("API module - Terraform estimation", () => {
     beforeEach(() => {

@@ -18,12 +18,10 @@ import {
     getCostsByService,
     getPredictions,
     getRuntimeStatus,
+    CostTrendPoint,
 } from "@/lib/api";
 
-type HistoricalPoint = {
-    date: string;
-    amount: number;
-};
+type HistoricalPoint = CostTrendPoint;
 
 type Anomaly = {
     date: string;
@@ -31,11 +29,13 @@ type Anomaly = {
     expected_cost: number;
     severity: string;
     service?: string | null;
+    currency?: string;
 };
 
 type RegionCost = {
     region: string;
     total_cost: number;
+    currency?: string;
 };
 
 const REGION_COLOR_CLASSES = ["bg-blue-500", "bg-violet-500", "bg-pink-500", "bg-orange-500"];
@@ -48,16 +48,21 @@ export function DashboardContent() {
     });
     const summary = summaryResult?.data;
     const summaryError = summaryResult && !summaryResult.success ? summaryResult.error : null;
-    const historicalCostData: HistoricalPoint[] = (summary?.by_day ?? []).map((point: HistoricalPoint) => ({
-        date: point.date,
-        amount: point.amount,
-    }));
+    const dashboardCurrency = summary?.currency || null;
+    const mixedCurrencies = Object.keys(summary?.currency_totals || {}).length > 1;
+    const historicalCostData: HistoricalPoint[] = dashboardCurrency
+        ? (summary?.by_day ?? []).map((point: HistoricalPoint) => ({
+            date: point.date,
+            amount: point.amount,
+            currency: point.currency || dashboardCurrency,
+        }))
+        : [];
 
     // 2. Fetch Predictions
     const { data: predictionsResult } = useQuery({
         queryKey: ["predictions", 5],
         queryFn: () => getPredictions(5, historicalCostData),
-        enabled: historicalCostData.length > 0,
+        enabled: historicalCostData.length > 0 && Boolean(dashboardCurrency),
     });
     const predictions = predictionsResult?.data?.predictions || [];
     const predictedTotal = predictionsResult?.data?.summary?.total_predicted_cost || 0;
@@ -92,7 +97,7 @@ export function DashboardContent() {
     const { data: anomaliesResult } = useQuery({
         queryKey: ["anomalies", historicalCostData],
         queryFn: () => getAnomalies(historicalCostData),
-        enabled: historicalCostData.length > 0,
+        enabled: historicalCostData.length > 0 && Boolean(dashboardCurrency),
     });
     const anomalies: Anomaly[] = anomaliesResult?.data?.anomalies || [];
 
@@ -153,6 +158,19 @@ docker compose exec cost-service python /app/scripts/seed_data.py --reset`}</pre
                             <span className="font-mono text-slate-300">DemoPass123!</span>
                         </p>
                     </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (mixedCurrencies) {
+        return (
+            <div className="p-6">
+                <div className="mx-auto max-w-3xl rounded-2xl border border-amber-500/20 bg-slate-900/80 p-8 text-white shadow-xl">
+                    <p className="text-sm font-medium uppercase tracking-[0.2em] text-amber-400">Multiple currencies detected</p>
+                    <h2 className="mt-3 text-3xl font-bold">Choose a single denomination for ML and charts</h2>
+                    <p className="mt-3 max-w-2xl text-slate-400">CloudPulse groups cost totals by currency and will not present a mixed portfolio as USD. Open Costs and filter to one account or provider before forecasting or anomaly detection.</p>
+                    <Link href="/costs" className="mt-6 inline-flex h-10 items-center justify-center rounded-lg bg-blue-600 px-4 text-sm font-medium text-white transition-colors hover:bg-blue-500">Open Costs</Link>
                 </div>
             </div>
         );
@@ -237,7 +255,7 @@ docker compose exec cost-service python /app/scripts/seed_data.py --reset`}</pre
             <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
                 <Card
                     title="Total Cost (MTD)"
-                    value={formatCurrency(Number(summary.total_cost))}
+                    value={formatCurrency(Number(summary.total_cost), dashboardCurrency || "USD")}
                     subtitle={
                         percentChange >= 0
                             ? `+${percentChange.toFixed(2)}% from last period`
@@ -253,7 +271,7 @@ docker compose exec cost-service python /app/scripts/seed_data.py --reset`}</pre
                 />
                 <Card
                     title="Predicted (Next 5 Days)"
-                    value={formatCurrency(predictedTotal)}
+                    value={formatCurrency(predictedTotal, dashboardCurrency || "USD")}
                     subtitle={`${predictionConfidence}% confidence`}
                     icon={<TrendingUp className="h-5 w-5" />}
                 />
@@ -286,7 +304,7 @@ docker compose exec cost-service python /app/scripts/seed_data.py --reset`}</pre
             {/* Charts Row 1 */}
             <div className="grid gap-6 lg:grid-cols-3">
                 <ChartCard title="Cost Trend & Forecast" className="lg:col-span-2">
-                    <CostTrendChart data={historicalCostData} predictions={predictions} />
+                    <CostTrendChart data={historicalCostData} predictions={predictions} currency={dashboardCurrency} />
                 </ChartCard>
                 <ChartCard title="Cost by Region">
                     <CostDistributionChart data={regionCosts} />
@@ -299,7 +317,7 @@ docker compose exec cost-service python /app/scripts/seed_data.py --reset`}</pre
                                     />
                                     <span className="text-gray-400">{region.region}</span>
                                 </div>
-                                <span className="text-white font-medium">{formatCurrency(region.total_cost)}</span>
+                                <span className="text-white font-medium">{formatCurrency(region.total_cost, region.currency || dashboardCurrency || "USD")}</span>
                             </div>
                         ))}
                     </div>
@@ -328,8 +346,8 @@ docker compose exec cost-service python /app/scripts/seed_data.py --reset`}</pre
                                         </span>
                                     </div>
                                     <p className="mt-1 text-sm text-gray-400">
-                                        {anomaly.date.slice(0, 10)}: expected {formatCurrency(anomaly.expected_cost)}, actual{" "}
-                                        {formatCurrency(anomaly.actual_cost)}
+                                        {anomaly.date.slice(0, 10)}: expected {formatCurrency(anomaly.expected_cost, anomaly.currency || dashboardCurrency || "USD")}, actual{" "}
+                                        {formatCurrency(anomaly.actual_cost, anomaly.currency || dashboardCurrency || "USD")}
                                     </p>
                                 </div>
                             ))

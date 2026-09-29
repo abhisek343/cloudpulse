@@ -3,7 +3,7 @@ CloudPulse AI - Cost Service
 Tests for the Terraform cost estimation service and API.
 """
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import AsyncClient
 
 from app.services.terraform_service import (
     estimate_plan,
@@ -171,43 +171,45 @@ def anyio_backend():
 
 
 @pytest.mark.asyncio
-async def test_estimate_endpoint():
-    from app.main import app
-
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post(
-            "/api/v1/terraform/estimate",
-            json={
-                "plan_json": {
-                    "resource_changes": [
-                        {
-                            "address": "aws_instance.web",
-                            "type": "aws_instance",
-                            "name": "web",
-                            "change": {
-                                "actions": ["create"],
-                                "before": None,
-                                "after": {"instance_type": "t3.micro"},
-                            },
-                        }
-                    ]
-                }
-            },
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["summary"]["total_resources"] == 1
+async def test_estimate_endpoint(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+):
+    response = await client.post(
+        "/api/v1/terraform/estimate",
+        headers=auth_headers,
+        json={
+            "plan_json": {
+                "resource_changes": [
+                    {
+                        "address": "aws_instance.web",
+                        "type": "aws_instance",
+                        "name": "web",
+                        "change": {
+                            "actions": ["create"],
+                            "before": None,
+                            "after": {"instance_type": "t3.micro"},
+                        },
+                    }
+                ]
+            }
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["summary"]["total_resources"] == 1
 
 
 @pytest.mark.asyncio
-async def test_supported_resources_endpoint():
-    from app.main import app
-
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get("/api/v1/terraform/supported-resources")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) > 0
-        assert "type" in data[0]
+async def test_supported_resources_endpoint(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+):
+    response = await client.get(
+        "/api/v1/terraform/supported-resources",
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) > 0
+    assert "type" in data[0]

@@ -126,6 +126,31 @@ CloudPulse AI is my answer to: *"What if FinOps tools were actually proactive?"*
 
 ---
 
+## Interview Demo — 5 Minutes
+
+1. From a fresh clone, run `docker compose up --build -d` and `docker compose ps`. Allow the migration and synthetic seed jobs to complete.
+2. Open http://localhost:3005 and sign in with the demo login below. Show the four AWS, Azure, and GCP-shaped accounts, then the cost history and service breakdown.
+3. Open Anomalies and Predictions; point out the seeded cost spike and the deterministic fallback forecast. These are synthetic fixtures, not a validated cloud bill or Chronos inference.
+4. Run `bash scripts/demo-smoke.sh` to exercise the same-origin frontend proxy, API, ML endpoints, worker sync lifecycle, Prometheus targets, and service health checks. Show `docker compose logs --tail=40 cost-worker`.
+5. Open http://localhost:9090 for Prometheus targets and http://localhost:3001 for Grafana (demo credentials below). Show the service health endpoints at `localhost:8001/health` and `localhost:8002/health`.
+
+## Architecture Decisions
+
+```mermaid
+flowchart TB
+  UI[Next.js and same-origin proxy] --> API[Cost API]
+  UI --> ML[ML API]
+  API --> DB[(PostgreSQL)]
+  API --> MQ[(RabbitMQ)]
+  MQ --> Worker[Cost worker]
+  Worker --> DB
+  API --> Redis[(Redis cache)]
+```
+
+PostgreSQL stores tenant-scoped accounts and cost records. RabbitMQ separates ingestion from request latency; the draft hardening introduces durable sync task state and bounded retries, with crash recovery still requiring integration validation. The same-origin frontend proxy keeps browser API calls on one origin. The local demo disables live cloud sync and external LLM calls. Aggregations distinguish currencies instead of summing unrelated monetary units. Prometheus, Grafana, Tempo, and OpenTelemetry provide a local observability example; alert delivery and real provider accounts are outside the credential-free demo.
+
+**Validation boundaries:** The synthetic demo and repository tests exercise local behavior. AWS Cost Explorer, Azure Cost Management, GCP billing export, optional Chronos weights, and LLM providers need separate credentials and integration checks. This repository should be described as a FinOps reference implementation with a reproducible local demo, not as a validated live multi-cloud service.
+
 ## Quick Start
 
 ### Prerequisites

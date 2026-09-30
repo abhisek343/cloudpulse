@@ -33,7 +33,7 @@ wait_for_prometheus_target() {
   until curl --fail --silent --show-error --get \
     --data-urlencode "query=${query}" \
     http://localhost:9090/api/v1/query \
-    | python -c '
+    | python3 -c '
 import json
 import sys
 
@@ -65,6 +65,7 @@ wait_for "http://localhost:8002/health" "ml-service"
 wait_for "http://localhost:3005" "frontend"
 wait_for "http://localhost:9090/-/ready" "Prometheus"
 wait_for "http://localhost:9093/-/ready" "Alertmanager"
+wait_for "http://localhost:3001/api/health" "Grafana"
 
 # Exercise the same Next.js session/proxy path used by the browser UI.
 frontend_login="$(curl --fail --silent --show-error \
@@ -78,7 +79,7 @@ if [[ -z "$frontend_login" ]]; then
   sed -E '/^[Ss]et-[Cc]ookie:/d' "$tmpdir/login.headers" >&2
   exit 1
 fi
-python -c '
+python3 -c '
 import json, sys
 login = json.load(sys.stdin)
 assert login["token_type"] == "bearer", login
@@ -86,7 +87,7 @@ assert login["token_type"] == "bearer", login
 echo "Frontend login response validated"
 
 me="$(curl --fail --silent --show-error --cookie "$cookiejar" http://localhost:3005/api/auth/me)"
-python -c '
+python3 -c '
 import json, sys
 profile = json.load(sys.stdin)
 assert profile["email"] == "demo@cloudpulse.local", profile
@@ -95,7 +96,7 @@ assert profile.get("organization_id"), profile
 echo "Authenticated profile response validated"
 
 summary="$(curl --fail --silent --show-error --cookie "$cookiejar"   "http://localhost:3005/api/cost/costs/summary?days=30")"
-python -c '
+python3 -c '
 import json, sys
 summary = json.load(sys.stdin)
 assert summary["currency"] == "USD", summary
@@ -105,7 +106,7 @@ assert "credentials" not in summary, summary
 echo "Cost summary response validated"
 
 ml_status="$(curl --fail --silent --show-error --cookie "$cookiejar" http://localhost:3005/api/ml/ml/status)"
-python -c '
+python3 -c '
 import json, sys
 status = json.load(sys.stdin)
 assert "predictor_fitted" in status, status
@@ -121,16 +122,93 @@ test "$ml_unauth_status" = "401"
 
 # Exercise the actual frontend -> cost API -> RabbitMQ -> worker -> database path.
 accounts="$(curl --fail --silent --show-error --cookie "$cookiejar" http://localhost:3005/api/cost/accounts)"
-account_id="$(python -c 'import json, sys; print(json.load(sys.stdin)["items"][0]["id"])' <<<"$accounts")"
+python3 -c '
+import json, sys
+accounts = json.load(sys.stdin)
+assert accounts["total"] == 4, accounts
+assert {a["provider"] for a in accounts["items"]} == {"demo"}, accounts
+assert {a["account_id"] for a in accounts["items"]} == {"demo-saas-001", "demo-startup-001", "demo-enterprise-001", "demo-incident-001"}, accounts
+assert all("credentials" not in a for a in accounts["items"]), accounts
+' <<<"$accounts"
+echo "Four safe synthetic demo accounts validated"
+account_id="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["items"][0]["id"])' <<<"$accounts")"
 csrf="$(awk '$6 == "cloudpulse_csrf_token" || $6 == "__Host-cloudpulse_csrf_token" { print $7; exit }' "$cookiejar")"
 test -n "$csrf"
+
+# Use the same 30-day history and inference requests as the Anomalies and
+# Predictions pages. HTTP 200 alone does not prove that inference succeeded.
+curl --fail --silent --show-error --cookie "$cookiejar" \
+  "http://localhost:3005/api/cost/costs/trend?days=30" > "$tmpdir/trend.json"
+python3 - "$tmpdir" <<'PY'
+import json, sys
+from pathlib import Path
+directory = Path(sys.argv[1])
+history = json.loads((directory / "trend.json").read_text())
+assert len(history) == 30, history
+assert {point["currency"] for point in history} == {"USD"}, history
+amounts = [float(point["amount"]) for point in history]
+assert min(amounts) > 0, amounts
+data = [{"date": p["date"], "amount": float(p["amount"]), "currency": p["currency"]} for p in history]
+(directory / "predict-request.json").write_text(json.dumps({"days": 7, "cost_data": data}))
+(directory / "detect-request.json").write_text(json.dumps({"cost_data": data}))
+PY
+echo "30-day cost history validated"
+
+# The guaranteed incident is in the 90-day history window, which can be
+# selected in the dashboard. Account provider labels intentionally stay demo.
+incident_id="$(python3 -c 'import json, sys; print(next(a["id"] for a in json.load(sys.stdin)["items"] if a["account_id"] == "demo-incident-001"))' <<<"$accounts")"
+incident="$(curl --fail --silent --show-error --cookie "$cookiejar" \
+  "http://localhost:3005/api/cost/costs/trend?days=90&account_id=$incident_id")"
+python3 -c '
+import json, statistics, sys
+history = json.load(sys.stdin)
+amounts = [float(point["amount"]) for point in history]
+assert len(amounts) == 90, history
+assert max(amounts) > statistics.median(amounts) * 1.5, "No meaningful seeded incident spike"
+' <<<"$incident"
+echo "Seeded incident cost spike validated"
+
+breakdown="$(curl --fail --silent --show-error --cookie "$cookiejar" \
+  "http://localhost:3005/api/cost/costs/by-service?days=30&limit=50")"
+python3 -c '
+import json, sys
+items = json.load(sys.stdin)
+assert len(items) > 1, items
+assert all(item["service"] and item["currency"] == "USD" for item in items), items
+assert any(item["total_cost"] > 0 for item in items), items
+assert {"Amazon EC2", "Compute Engine", "Virtual Machines"}.issubset({item["service"] for item in items}), items
+' <<<"$breakdown"
+echo "Service cost breakdown validated"
+
+for action in predict detect; do
+  curl --fail --silent --show-error --cookie "$cookiejar" \
+    -H "Content-Type: application/json" -H "X-CSRF-Token: $csrf" \
+    --data-binary "@$tmpdir/$action-request.json" \
+    "http://localhost:3005/api/ml/ml/$action" > "$tmpdir/$action.json"
+done
+python3 - "$tmpdir" <<'PY'
+import json, sys
+from pathlib import Path
+directory = Path(sys.argv[1])
+prediction = json.loads((directory / "predict.json").read_text())
+assert prediction["success"], prediction
+assert len(prediction["predictions"]) == 7, prediction
+assert all(p["lower_bound"] <= p["predicted_cost"] <= p["upper_bound"] for p in prediction["predictions"]), prediction
+detection = json.loads((directory / "detect.json").read_text())
+assert detection["success"], detection
+assert detection["total_records"] == 30, detection
+assert detection["anomalies_found"] > 0, detection
+assert len(detection["anomalies"]) == detection["anomalies_found"], detection
+PY
+echo "Seven-day forecast and anomaly detection validated"
+
 sync_response="$(curl --fail --silent --show-error --cookie "$cookiejar"   -H "X-CSRF-Token: $csrf"   -X POST "http://localhost:3005/api/cost/accounts/$account_id/sync")"
-task_id="$(python -c 'import json, sys; print(json.load(sys.stdin)["task_id"])' <<<"$sync_response")"
+task_id="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["task_id"])' <<<"$sync_response")"
 
 task_status="queued"
 for attempt in $(seq 1 60); do
   task_json="$(curl --fail --silent --show-error --cookie "$cookiejar"     "http://localhost:3005/api/cost/accounts/$account_id/sync/$task_id")"
-  task_status="$(python -c 'import json, sys; print(json.load(sys.stdin)["status"])' <<<"$task_json")"
+  task_status="$(python3 -c 'import json, sys; print(json.load(sys.stdin)["status"])' <<<"$task_json")"
   if [ "$task_status" = "succeeded" ]; then
     break
   fi
@@ -143,7 +221,7 @@ done
 test "$task_status" = "succeeded"
 
 runtime="$(curl --fail --silent http://localhost:8001/api/v1/health/runtime)"
-python -c '
+python3 -c '
 import json, sys
 runtime = json.loads(sys.stdin.read())
 assert runtime["cloud_sync_mode"] == "demo", runtime

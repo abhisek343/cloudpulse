@@ -128,9 +128,9 @@ CloudPulse AI is my answer to: *"What if FinOps tools were actually proactive?"*
 
 ## Interview Demo — 5 Minutes
 
-1. From a fresh clone, run `docker compose up --build -d` and `docker compose ps`. Allow the migration and synthetic seed jobs to complete.
+1. From a fresh clone, run `docker compose up --build --detach --wait --wait-timeout 300` and `docker compose ps`. This waits for the migration, synthetic seed, and service health checks.
 2. Open http://localhost:3005 and sign in with the demo login below. Show the four AWS, Azure, and GCP-shaped accounts, then the cost history and service breakdown.
-3. Open Anomalies and Predictions; point out the seeded cost spike and the deterministic fallback forecast. These are synthetic fixtures, not a validated cloud bill or Chronos inference.
+3. In Cost Explorer, select Last 90 Days and Demo Incident Recovery to show the seeded cost spike. Open Anomalies and Predictions for their current 30-day analysis and seven-day fallback forecast. These are synthetic fixtures, not a validated cloud bill or Chronos inference.
 4. Run `bash scripts/demo-smoke.sh` to exercise the same-origin frontend proxy, API, ML endpoints, worker sync lifecycle, Prometheus targets, and service health checks. Show `docker compose logs --tail=40 cost-worker`.
 5. Open http://localhost:9090 for Prometheus targets and http://localhost:3001 for Grafana (demo credentials below). Show the service health endpoints at `localhost:8001/health` and `localhost:8002/health`.
 
@@ -155,6 +155,7 @@ PostgreSQL stores tenant-scoped accounts and cost records. RabbitMQ separates in
 
 ### Prerequisites
 - Docker & Docker Compose
+- Bash, curl, and Python 3 for `scripts/demo-smoke.sh` (Linux or Windows with WSL2)
 - 4GB RAM for the complete local observability stack
 
 ### 1. Start The Safe Demo
@@ -162,7 +163,7 @@ PostgreSQL stores tenant-scoped accounts and cost records. RabbitMQ separates in
 ```bash
 git clone https://github.com/abhisek343/cloudpulse.git
 cd cloudpulse
-docker compose up --build -d
+docker compose up --build --detach --wait --wait-timeout 300
 ```
 
 That one command runs Alembic migrations and idempotently seeds a synthetic demo tenant before the API, worker, and frontend start. It requires no `.env` file and no cloud credentials. By default, CloudPulse runs in safe demo mode:
